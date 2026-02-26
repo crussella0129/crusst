@@ -1,0 +1,15 @@
+[package]
+name = "crusst"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Crusst — Rust Based Geometry Kernel"
+repository = "https://github.com/crussella0129/crusst"
+
+[dependencies]
+nalgebra = "0.33"
+rayon = "1.10"
+isosurface = "0.1.0-alpha.0"
+
+[dev-dependencies]
+approx = "0.5"
