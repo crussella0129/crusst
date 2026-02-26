@@ -293,6 +293,30 @@ The design separates **distance evaluation** (primitives, shapes) from **mesh ge
 | [`isosurface`](https://docs.rs/isosurface) | 0.1.0-alpha.0 | Marching cubes algorithm |
 | [`approx`](https://docs.rs/approx) | 0.5 | Floating-point test assertions (dev only) |
 
+## Math Library Interoperability (mint)
+
+Crusst uses [nalgebra](https://nalgebra.org) for all vector/matrix types. If your project uses a different math library ([glam](https://crates.io/crates/glam), [cgmath](https://crates.io/crates/cgmath), [ultraviolet](https://crates.io/crates/ultraviolet), etc.), enable the `mint` feature to convert between them seamlessly via the [mint](https://crates.io/crates/mint) interop standard:
+
+```toml
+[dependencies]
+crusst = { version = "0.1", features = ["mint"] }
+```
+
+With the feature enabled, nalgebra gains `From`/`Into` impls for `mint` types, so you can convert at your call sites:
+
+```rust
+use crusst::shape::Sphere;
+use nalgebra::Vector3;
+
+// glam → mint → nalgebra
+let glam_center = glam::DVec3::new(0.0, 0.0, 0.0);
+let center: Vector3<f64> = Vector3::from(mint::Vector3::from(glam_center));
+
+let sphere = Sphere::new(center, 5.0);
+```
+
+This forwards nalgebra's `convert-mint` feature — no extra dependencies are added to your build beyond what nalgebra already pulls in.
+
 ## License
 
 Licensed under either of

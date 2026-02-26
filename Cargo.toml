@@ -6,6 +6,10 @@ license = "MIT OR Apache-2.0"
 description = "Crusst — Rust Based Geometry Kernel"
 repository = "https://github.com/crussella0129/crusst"
 
+[features]
+default = []
+mint = ["nalgebra/convert-mint"]
+
 [dependencies]
 nalgebra = "0.33"
 rayon = "1.10"
