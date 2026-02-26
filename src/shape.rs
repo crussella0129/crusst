@@ -1,10 +1,16 @@
-use nalgebra::{Rotation3, Vector3};
+use nalgebra::{Rotation3, Vector2, Vector3};
 use crate::primitives;
 use crate::csg;
 
 /// Trait for any object that can evaluate a signed distance.
 pub trait Sdf: Send + Sync {
     fn evaluate(&self, point: Vector3<f64>) -> f64;
+}
+
+/// Trait for a 2D signed distance function.
+/// Used as the cross-section profile for Revolve and Extrude operations.
+pub trait Sdf2d: Send + Sync {
+    fn evaluate(&self, point: Vector2<f64>) -> f64;
 }
 
 // ---------------------------------------------------------------------------
@@ -432,5 +438,145 @@ impl<F: Fn(Vector3<f64>) -> f64 + Send + Sync> FnSdf<F> {
 impl<F: Fn(Vector3<f64>) -> f64 + Send + Sync> Sdf for FnSdf<F> {
     fn evaluate(&self, point: Vector3<f64>) -> f64 {
         (self.func)(point)
+    }
+}
+
+/// A 2D SDF defined by a closure.
+pub struct FnSdf2d<F: Fn(Vector2<f64>) -> f64 + Send + Sync> {
+    pub func: F,
+}
+
+impl<F: Fn(Vector2<f64>) -> f64 + Send + Sync> FnSdf2d<F> {
+    pub fn new(func: F) -> Self { Self { func } }
+}
+
+impl<F: Fn(Vector2<f64>) -> f64 + Send + Sync> Sdf2d for FnSdf2d<F> {
+    fn evaluate(&self, point: Vector2<f64>) -> f64 {
+        (self.func)(point)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 2D Primitives (for use with Revolve and Extrude)
+// ---------------------------------------------------------------------------
+
+/// 2D circle SDF.
+pub struct Circle2d {
+    pub center: Vector2<f64>,
+    pub radius: f64,
+}
+
+impl Circle2d {
+    pub fn new(center: Vector2<f64>, radius: f64) -> Self { Self { center, radius } }
+}
+
+impl Sdf2d for Circle2d {
+    fn evaluate(&self, point: Vector2<f64>) -> f64 {
+        (point - self.center).norm() - self.radius
+    }
+}
+
+/// 2D rectangle SDF.
+pub struct Rect2d {
+    pub center: Vector2<f64>,
+    pub half_extents: Vector2<f64>,
+}
+
+impl Rect2d {
+    pub fn new(center: Vector2<f64>, half_extents: Vector2<f64>) -> Self {
+        Self { center, half_extents }
+    }
+}
+
+impl Sdf2d for Rect2d {
+    fn evaluate(&self, point: Vector2<f64>) -> f64 {
+        let d = (point - self.center).abs() - self.half_extents;
+        let outside = Vector2::new(d.x.max(0.0), d.y.max(0.0)).norm();
+        let inside = d.x.max(d.y).min(0.0);
+        outside + inside
+    }
+}
+
+/// 2D union.
+pub struct Union2d<A: Sdf2d, B: Sdf2d> {
+    pub a: A,
+    pub b: B,
+}
+
+impl<A: Sdf2d, B: Sdf2d> Union2d<A, B> {
+    pub fn new(a: A, b: B) -> Self { Self { a, b } }
+}
+
+impl<A: Sdf2d, B: Sdf2d> Sdf2d for Union2d<A, B> {
+    fn evaluate(&self, point: Vector2<f64>) -> f64 {
+        self.a.evaluate(point).min(self.b.evaluate(point))
+    }
+}
+
+/// 2D difference.
+pub struct Difference2d<A: Sdf2d, B: Sdf2d> {
+    pub a: A,
+    pub b: B,
+}
+
+impl<A: Sdf2d, B: Sdf2d> Difference2d<A, B> {
+    pub fn new(a: A, b: B) -> Self { Self { a, b } }
+}
+
+impl<A: Sdf2d, B: Sdf2d> Sdf2d for Difference2d<A, B> {
+    fn evaluate(&self, point: Vector2<f64>) -> f64 {
+        self.a.evaluate(point).max(-self.b.evaluate(point))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Revolve and Extrude (2D → 3D)
+// ---------------------------------------------------------------------------
+
+/// Revolve a 2D profile around the Y axis to create a solid of revolution.
+///
+/// The 2D profile is evaluated in the (r, y) plane where r = sqrt(x² + z²).
+/// This maps every 3D point to its corresponding position on the profile,
+/// sweeping the profile 360 degrees around Y.
+///
+/// The profile's X coordinate corresponds to the radial distance from Y axis,
+/// and the profile's Y coordinate corresponds to the world Y coordinate.
+pub struct Revolve<P: Sdf2d> {
+    pub profile: P,
+}
+
+impl<P: Sdf2d> Revolve<P> {
+    pub fn new(profile: P) -> Self { Self { profile } }
+}
+
+impl<P: Sdf2d> Sdf for Revolve<P> {
+    fn evaluate(&self, point: Vector3<f64>) -> f64 {
+        let r = (point.x * point.x + point.z * point.z).sqrt();
+        self.profile.evaluate(Vector2::new(r, point.y))
+    }
+}
+
+/// Extrude a 2D profile along the Z axis.
+///
+/// The 2D profile is evaluated in the XY plane. The extrusion extends
+/// `half_height` in both the +Z and -Z directions.
+pub struct Extrude<P: Sdf2d> {
+    pub profile: P,
+    pub half_height: f64,
+}
+
+impl<P: Sdf2d> Extrude<P> {
+    pub fn new(profile: P, half_height: f64) -> Self { Self { profile, half_height } }
+}
+
+impl<P: Sdf2d> Sdf for Extrude<P> {
+    fn evaluate(&self, point: Vector3<f64>) -> f64 {
+        let d_2d = self.profile.evaluate(Vector2::new(point.x, point.y));
+        let d_z = point.z.abs() - self.half_height;
+        if d_2d > 0.0 && d_z > 0.0 {
+            (d_2d * d_2d + d_z * d_z).sqrt()
+        } else {
+            d_2d.max(d_z)
+        }
     }
 }

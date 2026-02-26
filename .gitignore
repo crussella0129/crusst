@@ -1,1 +1,3 @@
 /target
+viewer/*.obj
+viewer/*.stl

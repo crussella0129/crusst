@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Crusst Geometry Kernel — Showcase Viewer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0f; color: #e0e0e0; font-family: 'Segoe UI', system-ui, sans-serif; overflow-x: hidden; }
+
+  header {
+    padding: 20px 32px;
+    background: linear-gradient(135deg, #111118 0%, #1a1a2e 100%);
+    border-bottom: 1px solid #2a2a3e;
+  }
+  header h1 { font-size: 24px; font-weight: 600; letter-spacing: 1px; }
+  header h1 span { color: #ff6b35; }
+  header p { color: #888; font-size: 13px; margin-top: 4px; }
+
+  .controls {
+    display: flex; gap: 8px; padding: 16px 32px; flex-wrap: wrap;
+    background: #111118; border-bottom: 1px solid #1e1e2e;
+  }
+  .controls button {
+    padding: 6px 14px; border: 1px solid #2a2a3e; border-radius: 6px;
+    background: #16161f; color: #ccc; cursor: pointer; font-size: 12px;
+    transition: all 0.15s;
+  }
+  .controls button:hover { background: #22223a; border-color: #ff6b35; color: #fff; }
+  .controls button.active { background: #ff6b35; border-color: #ff6b35; color: #fff; font-weight: 600; }
+
+  .category-label {
+    padding: 6px 14px; font-size: 11px; color: #666; text-transform: uppercase;
+    letter-spacing: 1.5px; display: flex; align-items: center; font-weight: 700;
+  }
+  .sep { width: 1px; height: 24px; background: #2a2a3e; margin: 0 4px; }
+
+  #viewer-container {
+    width: 100%; height: calc(100vh - 140px); position: relative;
+  }
+  canvas { display: block; }
+
+  #info-panel {
+    position: absolute; bottom: 20px; left: 20px; padding: 14px 20px;
+    background: rgba(10,10,15,0.85); border: 1px solid #2a2a3e;
+    border-radius: 10px; backdrop-filter: blur(8px); min-width: 260px;
+  }
+  #info-panel h3 { font-size: 15px; color: #ff6b35; margin-bottom: 6px; }
+  #info-panel .stat { font-size: 12px; color: #999; line-height: 1.7; }
+  #info-panel .stat b { color: #ccc; }
+  #info-panel .sealed { color: #4caf50; font-weight: 700; }
+
+  #loading {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    font-size: 14px; color: #666;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span>Crusst</span> Geometry Kernel — Sealed Solids Viewer</h1>
+  <p>OBJ indexed meshes with shared vertices — watertight topology preserved</p>
+</header>
+
+<div class="controls" id="controls"></div>
+
+<div id="viewer-container">
+  <div id="loading">Loading...</div>
+  <div id="info-panel">
+    <h3 id="model-name">Select a model</h3>
+    <div class="stat" id="model-stats"></div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+
+const models = [
+  { file: '01_sphere.obj',             label: 'Sphere',             cat: 'Primitives' },
+  { file: '02_box.obj',                label: 'Box',                cat: 'Primitives' },
+  { file: '03_cylinder.obj',           label: 'Cylinder',           cat: 'Primitives' },
+  { file: '04_capped_cone.obj',        label: 'Capped Cone',        cat: 'Primitives' },
+  { file: '05_torus.obj',              label: 'Torus',              cat: 'Primitives' },
+  { file: '06_rounded_box.obj',        label: 'Rounded Box',        cat: 'Primitives' },
+  { file: '07_capsule.obj',            label: 'Capsule',            cat: 'Primitives' },
+  { file: '08_ellipsoid.obj',          label: 'Ellipsoid',          cat: 'Primitives' },
+  { file: '09_rounded_cylinder.obj',   label: 'Rounded Cylinder',   cat: 'Primitives' },
+  { file: '10_boolean_union.obj',      label: 'Union',              cat: 'Booleans' },
+  { file: '11_boolean_intersection.obj',label: 'Intersection',      cat: 'Booleans' },
+  { file: '12_boolean_difference.obj', label: 'Difference',         cat: 'Booleans' },
+  { file: '13_smooth_union.obj',       label: 'Smooth Union',       cat: 'Smooth' },
+  { file: '14_smooth_intersection.obj',label: 'Smooth Intersect',   cat: 'Smooth' },
+  { file: '15_smooth_difference.obj',  label: 'Smooth Difference',  cat: 'Smooth' },
+  { file: '16_translate.obj',          label: 'Translate',          cat: 'Transforms' },
+  { file: '17_rotate.obj',             label: 'Rotate',             cat: 'Transforms' },
+  { file: '18_scale.obj',              label: 'Scale',              cat: 'Transforms' },
+  { file: '19_mirror.obj',             label: 'Mirror',             cat: 'Transforms' },
+  { file: '20_shell.obj',              label: 'Shell (Onion)',      cat: 'Transforms' },
+  { file: '20b_revolve.obj',           label: 'Revolve',            cat: 'Transforms' },
+  { file: '20c_extrude.obj',           label: 'Extrude',            cat: 'Transforms' },
+  { file: '21_mounting_bracket.obj',   label: 'Mounting Bracket',   cat: 'Composed' },
+  { file: '22_pipe_tee.obj',           label: 'Pipe Tee',           cat: 'Composed' },
+  { file: '23_gasket_ring.obj',        label: 'Gasket Ring',        cat: 'Composed' },
+  { file: '24_rounded_enclosure.obj',  label: 'Enclosure',          cat: 'Composed' },
+  { file: '25_organic_blob.obj',       label: 'Organic Blob',       cat: 'Composed' },
+  { file: '26_rotated_star.obj',       label: 'Rotated Star',       cat: 'Composed' },
+  { file: '27_bearing_housing.obj',    label: 'Bearing Housing',    cat: 'Composed' },
+];
+
+// Build controls
+const controlsEl = document.getElementById('controls');
+let lastCat = '';
+models.forEach((m, i) => {
+  if (m.cat !== lastCat) {
+    if (lastCat) { const sep = document.createElement('div'); sep.className = 'sep'; controlsEl.appendChild(sep); }
+    const lbl = document.createElement('div');
+    lbl.className = 'category-label';
+    lbl.textContent = m.cat;
+    controlsEl.appendChild(lbl);
+    lastCat = m.cat;
+  }
+  const btn = document.createElement('button');
+  btn.textContent = m.label;
+  btn.dataset.index = String(i);
+  btn.addEventListener('click', () => loadModel(i));
+  controlsEl.appendChild(btn);
+});
+
+// Three.js setup
+const container = document.getElementById('viewer-container');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0a0f);
+
+const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+camera.position.set(30, 25, 30);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(container.clientWidth, container.clientHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.shadowMap.enabled = false;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.2;
+container.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 1.5;
+
+// Lighting
+scene.add(new THREE.AmbientLight(0x404060, 0.6));
+
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
+keyLight.position.set(20, 30, 15);
+scene.add(keyLight);
+
+const fillLight = new THREE.DirectionalLight(0x4488cc, 0.6);
+fillLight.position.set(-15, 10, -10);
+scene.add(fillLight);
+
+const rimLight = new THREE.DirectionalLight(0xff6b35, 0.4);
+rimLight.position.set(0, -10, -20);
+scene.add(rimLight);
+
+// Grid
+const gridHelper = new THREE.GridHelper(60, 30, 0x1a1a2e, 0x111118);
+gridHelper.position.y = -0.01;
+scene.add(gridHelper);
+
+// Materials
+const solidMaterial = new THREE.MeshPhysicalMaterial({
+  color: 0xcc5522,
+  metalness: 0.3,
+  roughness: 0.4,
+  clearcoat: 0.3,
+  clearcoatRoughness: 0.2,
+  side: THREE.FrontSide,  // FrontSide only — proves watertight (no back-face holes)
+});
+
+const wireOverlay = new THREE.MeshBasicMaterial({
+  color: 0xff6b35,
+  wireframe: true,
+  transparent: true,
+  opacity: 0.06,
+});
+
+let currentGroup = null;
+const loader = new OBJLoader();
+const loadingEl = document.getElementById('loading');
+
+function clearCurrent() {
+  if (currentGroup) {
+    scene.remove(currentGroup);
+    currentGroup.traverse((child) => {
+      if (child.geometry) child.geometry.dispose();
+    });
+    currentGroup = null;
+  }
+}
+
+function updateInfoPanel(label, cat, triCount, vertCount, indexedVerts, sizeVec, fileName) {
+  document.getElementById('model-name').textContent = label;
+  const statsEl = document.getElementById('model-stats');
+  while (statsEl.firstChild) statsEl.removeChild(statsEl.firstChild);
+
+  const lines = [
+    ['Category', cat],
+    ['Triangles', triCount.toLocaleString()],
+    ['Draw vertices', vertCount.toLocaleString()],
+    ['Indexed vertices', indexedVerts.toLocaleString()],
+    ['Bounding', sizeVec.x.toFixed(1) + ' x ' + sizeVec.y.toFixed(1) + ' x ' + sizeVec.z.toFixed(1)],
+    ['Format', 'OBJ (indexed, shared vertices)'],
+    ['Topology', 'SEALED SOLID'],
+  ];
+
+  lines.forEach(([key, val], idx) => {
+    const b = document.createElement('b');
+    b.textContent = key + ': ';
+    statsEl.appendChild(b);
+    const span = document.createElement('span');
+    span.textContent = val;
+    if (key === 'Topology') span.className = 'sealed';
+    statsEl.appendChild(span);
+    if (idx < lines.length - 1) statsEl.appendChild(document.createElement('br'));
+  });
+}
+
+function loadModel(index) {
+  const m = models[index];
+
+  controlsEl.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+  const activeBtn = controlsEl.querySelector('button[data-index="' + index + '"]');
+  if (activeBtn) activeBtn.classList.add('active');
+
+  loadingEl.style.display = 'block';
+  clearCurrent();
+
+  loader.load(m.file, (obj) => {
+    // OBJ loader returns a Group; find the mesh inside
+    const group = new THREE.Group();
+    let totalTris = 0;
+    let totalVerts = 0;
+    let indexedVerts = 0;
+
+    obj.traverse((child) => {
+      if (child.isMesh) {
+        const geo = child.geometry;
+        geo.computeVertexNormals();
+
+        const solidMesh = new THREE.Mesh(geo, solidMaterial);
+        group.add(solidMesh);
+
+        const wireMesh = new THREE.Mesh(geo.clone(), wireOverlay);
+        group.add(wireMesh);
+
+        if (geo.index) {
+          totalTris += geo.index.count / 3;
+          indexedVerts = geo.attributes.position.count;
+        } else {
+          totalTris += geo.attributes.position.count / 3;
+          indexedVerts = geo.attributes.position.count;
+        }
+        totalVerts = geo.attributes.position.count;
+      }
+    });
+
+    // Center
+    const bbox = new THREE.Box3().setFromObject(group);
+    const center = new THREE.Vector3();
+    bbox.getCenter(center);
+    group.position.sub(center);
+
+    const size = new THREE.Vector3();
+    bbox.getSize(size);
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const dist = maxDim * 1.8;
+    camera.position.set(dist * 0.7, dist * 0.5, dist * 0.7);
+    controls.target.set(0, 0, 0);
+    controls.update();
+
+    gridHelper.position.y = bbox.min.y - center.y - 0.5;
+
+    scene.add(group);
+    currentGroup = group;
+
+    updateInfoPanel(m.label, m.cat, totalTris, totalVerts, indexedVerts, size, m.file);
+    loadingEl.style.display = 'none';
+  });
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = container.clientWidth / container.clientHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(container.clientWidth, container.clientHeight);
+});
+
+loadModel(0);
+</script>
+</body>
+</html>
