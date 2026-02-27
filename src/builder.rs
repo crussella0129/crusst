@@ -292,7 +292,7 @@ impl Shape {
 }
 
 /// Recursively compute a conservative AABB for an SdfNode.
-fn compute_bbox(node: &SdfNode) -> BBox3 {
+pub(crate) fn compute_bbox(node: &SdfNode) -> BBox3 {
     match node {
         // -- Primitives --------------------------------------------------------
 
@@ -564,6 +564,16 @@ impl Shape {
         let mesh = self.mesh(MeshSettings::default());
         crate::export::write_stl(&mesh, std::path::Path::new(path))
     }
+
+    /// Write a STEP AP203 file using the smart tiered exporter.
+    ///
+    /// Recognized primitives (Sphere, Box3, Cylinder) — optionally wrapped
+    /// in rigid transforms — are written as exact BRep entities. Everything
+    /// else is meshed via adaptive dual contouring and written as tessellated
+    /// ADVANCED_FACE entities.
+    pub fn export_step(&self, path: &str) -> std::io::Result<()> {
+        crate::step_export::write_step_smart(&self.node, std::path::Path::new(path))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -621,4 +631,5 @@ impl Shape {
     pub fn node(&self) -> &SdfNode {
         &self.node
     }
+
 }
