@@ -1,4 +1,4 @@
-use crusst::dag::{SdfNode, SdfNode2d};
+use crusst::dag::SdfNode;
 use nalgebra::Vector3;
 use std::sync::Arc;
 

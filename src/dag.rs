@@ -150,6 +150,18 @@ pub enum SdfNode {
     Custom(Arc<dyn crate::shape::Sdf>),
 }
 
+// Compile-time assertions: SdfNode and SdfNode2d must be Send + Sync
+// so the DAG can be shared across threads during parallel octree traversal.
+const _: () = {
+    #[allow(dead_code)]
+    fn assert_send_sync<T: Send + Sync>() {}
+    #[allow(dead_code)]
+    fn check() {
+        assert_send_sync::<SdfNode>();
+        assert_send_sync::<SdfNode2d>();
+    }
+};
+
 impl SdfNode {
     /// Evaluate the signed distance at a 3D point.
     pub fn evaluate(&self, point: Vector3<f64>) -> f64 {
@@ -221,9 +233,10 @@ impl SdfNode {
                 inner.evaluate(point * inv) * factor
             }
             SdfNode::Mirror(inner, normal) => {
-                let n = normal.normalize();
-                let d = point.dot(&n);
-                let reflected = point - n * (2.0 * d.min(0.0));
+                // `normal` is expected to be unit-length; the builder API
+                // normalizes at construction time so we skip it on the hot path.
+                let d = point.dot(normal);
+                let reflected = point - normal * (2.0 * d.min(0.0));
                 inner.evaluate(reflected)
             }
             SdfNode::Shell(inner, thickness) => {
