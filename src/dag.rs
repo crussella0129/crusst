@@ -6,7 +6,8 @@
 //! - Analytical gradients for QEF
 //! - DAG introspection for smart STEP export
 
-use crate::feature::{EdgeInfo, FaceInfo};
+use crate::blend::BlendProfile;
+use crate::feature::{EdgeInfo, FaceInfo, FeatureTarget};
 use crate::types::{BBox3, Interval};
 use crate::{csg, primitives};
 use nalgebra::{Rotation3, Vector2, Vector3};
@@ -165,6 +166,21 @@ pub enum SdfNode {
     /// Chamfer difference with chamfer size `k`.
     ChamferDifference(Arc<SdfNode>, Arc<SdfNode>, f64),
 
+    // -- Targeted Blend (2) ------------------------------------------------
+    /// Targeted fillet: applies a blend profile to specific edges of the inner shape.
+    Fillet {
+        inner: Arc<SdfNode>,
+        profile: BlendProfile,
+        targets: Vec<FeatureTarget>,
+    },
+
+    /// Targeted chamfer: applies a chamfer profile to specific edges of the inner shape.
+    Chamfer {
+        inner: Arc<SdfNode>,
+        profile: BlendProfile,
+        targets: Vec<FeatureTarget>,
+    },
+
     // -- Transforms (6) ----------------------------------------------------
     /// Translate by an offset vector.
     Translate(Arc<SdfNode>, Vector3<f64>),
@@ -285,6 +301,65 @@ impl SdfNode {
             }
             SdfNode::ChamferDifference(a, b, k) => {
                 csg::chamfer_difference(a.evaluate(point), b.evaluate(point), *k)
+            }
+
+            // -- Targeted Blend --------------------------------------------
+            SdfNode::Fillet {
+                inner,
+                profile,
+                targets,
+            }
+            | SdfNode::Chamfer {
+                inner,
+                profile,
+                targets,
+            } => {
+                let sharp = inner.evaluate(point);
+
+                // Get edge info from the inner shape
+                let edges = match inner.edge_info() {
+                    Some(e) => e,
+                    None => return sharp, // no edge info, can't blend
+                };
+
+                let r = profile.radius();
+                let mut result = sharp;
+
+                for target in targets {
+                    // Determine which edges to process
+                    let edge_indices: Vec<usize> = if target.indices.is_empty() {
+                        // All edges
+                        (0..edges.len()).collect()
+                    } else {
+                        target.indices.clone()
+                    };
+
+                    for &edge_idx in &edge_indices {
+                        if edge_idx >= edges.len() {
+                            continue;
+                        }
+                        let edge = &edges[edge_idx];
+
+                        // Get face distances
+                        let d1 = match inner.face_distance(point, edge.face_a) {
+                            Some(d) => d,
+                            None => continue,
+                        };
+                        let d2 = match inner.face_distance(point, edge.face_b) {
+                            Some(d) => d,
+                            None => continue,
+                        };
+
+                        // Only blend if near the edge: both face distances
+                        // must be within one radius of their respective planes.
+                        if d1 > -r && d2 > -r && d1 < r && d2 < r {
+                            let blended = crate::blend::blend_intersection(d1, d2, profile);
+                            result = result.max(blended);
+                        }
+                    }
+                }
+
+                result
             }
 
             // -- Transforms ------------------------------------------------
@@ -475,6 +550,13 @@ impl SdfNode {
                 Interval::new(sharp.lo, sharp.hi + k * 0.3)
             }
 
+            // -- Targeted Blend --------------------------------------------
+            SdfNode::Fillet { inner, profile, .. } | SdfNode::Chamfer { inner, profile, .. } => {
+                let sharp = inner.interval_evaluate(bbox);
+                let dev = profile.max_deviation();
+                Interval::new(sharp.lo, sharp.hi + dev)
+            }
+
             // -- Transforms ------------------------------------------------
             SdfNode::Translate(inner, offset) => {
                 // Shift bbox by -offset, evaluate inner
@@ -608,6 +690,9 @@ impl SdfNode {
             | SdfNode::ChamferIntersection(_, _, _)
             | SdfNode::ChamferDifference(_, _, _) => central_diff_gradient(self, point),
 
+            // Targeted blend: central differences
+            SdfNode::Fillet { .. } | SdfNode::Chamfer { .. } => central_diff_gradient(self, point),
+
             // -- Transforms ------------------------------------------------
             SdfNode::Translate(inner, offset) => inner.gradient(point - offset),
             SdfNode::Rotate(inner, rotation) => {
@@ -729,6 +814,8 @@ impl SdfNode {
             SdfNode::Translate(inner, _) | SdfNode::Rotate(inner, _) | SdfNode::Scale(inner, _) => {
                 inner.face_info()
             }
+            // Targeted blend delegates to inner
+            SdfNode::Fillet { inner, .. } | SdfNode::Chamfer { inner, .. } => inner.face_info(),
             _ => None,
         }
     }
@@ -830,6 +917,8 @@ impl SdfNode {
             SdfNode::Translate(inner, _) | SdfNode::Rotate(inner, _) | SdfNode::Scale(inner, _) => {
                 inner.edge_info()
             }
+            // Targeted blend delegates to inner
+            SdfNode::Fillet { inner, .. } | SdfNode::Chamfer { inner, .. } => inner.edge_info(),
             _ => None,
         }
     }
@@ -891,6 +980,10 @@ impl SdfNode {
             SdfNode::Translate(inner, offset) => inner.closest_face(point - offset),
             SdfNode::Rotate(inner, rotation) => inner.closest_face(rotation.inverse() * point),
             SdfNode::Scale(inner, factor) => inner.closest_face(point / *factor),
+            // Targeted blend delegates to inner
+            SdfNode::Fillet { inner, .. } | SdfNode::Chamfer { inner, .. } => {
+                inner.closest_face(point)
+            }
             _ => None,
         }
     }
@@ -954,6 +1047,10 @@ impl SdfNode {
             SdfNode::Scale(inner, factor) => inner
                 .face_distance(point / *factor, face_index)
                 .map(|d| d * factor),
+            // Targeted blend delegates to inner
+            SdfNode::Fillet { inner, .. } | SdfNode::Chamfer { inner, .. } => {
+                inner.face_distance(point, face_index)
+            }
             _ => None,
         }
     }

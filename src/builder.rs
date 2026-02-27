@@ -15,9 +15,10 @@
 //! bracket.export_obj("bracket.obj").unwrap();
 //! ```
 
+use crate::blend::BlendProfile;
 use crate::dag::SdfNode;
 use crate::dual_contouring::extract_mesh_adaptive;
-use crate::feature::{EdgeInfo, FaceInfo};
+use crate::feature::{EdgeInfo, FaceInfo, FeatureTarget};
 use crate::types::{BBox3, MeshSettings, TriangleMesh};
 use crate::voxel::VoxelGrid;
 use nalgebra::{Rotation3, Vector3};
@@ -224,6 +225,28 @@ impl Shape {
     pub fn chamfer_subtract(self, other: Shape, k: f64) -> Self {
         Self {
             node: Arc::new(SdfNode::ChamferDifference(self.node, other.node, k)),
+        }
+    }
+
+    /// Apply a fillet with the given profile to targeted edges.
+    pub fn fillet(self, profile: BlendProfile, targets: Vec<FeatureTarget>) -> Self {
+        Self {
+            node: Arc::new(SdfNode::Fillet {
+                inner: self.node,
+                profile,
+                targets,
+            }),
+        }
+    }
+
+    /// Apply a chamfer with the given profile to targeted edges.
+    pub fn chamfer(self, profile: BlendProfile, targets: Vec<FeatureTarget>) -> Self {
+        Self {
+            node: Arc::new(SdfNode::Chamfer {
+                inner: self.node,
+                profile,
+                targets,
+            }),
         }
     }
 }
@@ -650,6 +673,14 @@ pub(crate) fn compute_bbox(node: &SdfNode) -> BBox3 {
             let ba = compute_bbox(a);
             let ext = Vector3::new(*k, *k, *k);
             BBox3::new(ba.min - ext, ba.max + ext)
+        }
+
+        // -- Targeted Blend ----------------------------------------------------
+        SdfNode::Fillet { inner, profile, .. } | SdfNode::Chamfer { inner, profile, .. } => {
+            let b = compute_bbox(inner);
+            let r = profile.radius();
+            let ext = Vector3::new(r, r, r);
+            BBox3::new(b.min - ext, b.max + ext)
         }
 
         // -- Transforms --------------------------------------------------------
