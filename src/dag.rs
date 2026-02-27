@@ -6,6 +6,7 @@
 //! - Analytical gradients for QEF
 //! - DAG introspection for smart STEP export
 
+use crate::feature::{EdgeInfo, FaceInfo};
 use crate::types::{BBox3, Interval};
 use crate::{csg, primitives};
 use nalgebra::{Rotation3, Vector2, Vector3};
@@ -581,6 +582,301 @@ impl SdfNode {
 
             // -- Opaque ----------------------------------------------------
             SdfNode::Custom(_) => central_diff_gradient(self, point),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Feature enumeration
+    // -----------------------------------------------------------------------
+
+    /// Get face information for this primitive.
+    /// Returns None for non-primitive nodes.
+    pub fn face_info(&self) -> Option<Vec<FaceInfo>> {
+        match self {
+            SdfNode::Box3 { .. } => Some(vec![
+                FaceInfo {
+                    index: 0,
+                    label: "+X".into(),
+                    normal: Some(Vector3::new(1.0, 0.0, 0.0)),
+                },
+                FaceInfo {
+                    index: 1,
+                    label: "-X".into(),
+                    normal: Some(Vector3::new(-1.0, 0.0, 0.0)),
+                },
+                FaceInfo {
+                    index: 2,
+                    label: "+Y".into(),
+                    normal: Some(Vector3::new(0.0, 1.0, 0.0)),
+                },
+                FaceInfo {
+                    index: 3,
+                    label: "-Y".into(),
+                    normal: Some(Vector3::new(0.0, -1.0, 0.0)),
+                },
+                FaceInfo {
+                    index: 4,
+                    label: "+Z".into(),
+                    normal: Some(Vector3::new(0.0, 0.0, 1.0)),
+                },
+                FaceInfo {
+                    index: 5,
+                    label: "-Z".into(),
+                    normal: Some(Vector3::new(0.0, 0.0, -1.0)),
+                },
+            ]),
+            SdfNode::Cylinder { .. } => Some(vec![
+                FaceInfo {
+                    index: 0,
+                    label: "side".into(),
+                    normal: None,
+                },
+                FaceInfo {
+                    index: 1,
+                    label: "top".into(),
+                    normal: None, // depends on axis direction
+                },
+                FaceInfo {
+                    index: 2,
+                    label: "bottom".into(),
+                    normal: None, // depends on axis direction
+                },
+            ]),
+            SdfNode::Sphere { .. } => Some(vec![FaceInfo {
+                index: 0,
+                label: "surface".into(),
+                normal: None,
+            }]),
+            // Transforms delegate to inner
+            SdfNode::Translate(inner, _) | SdfNode::Rotate(inner, _) | SdfNode::Scale(inner, _) => {
+                inner.face_info()
+            }
+            _ => None,
+        }
+    }
+
+    /// Get edge information for this primitive.
+    /// Returns None for non-primitive nodes.
+    pub fn edge_info(&self) -> Option<Vec<EdgeInfo>> {
+        match self {
+            SdfNode::Box3 { .. } => Some(vec![
+                EdgeInfo {
+                    index: 0,
+                    face_a: 0,
+                    face_b: 2,
+                    label: "+X/+Y".into(),
+                },
+                EdgeInfo {
+                    index: 1,
+                    face_a: 0,
+                    face_b: 3,
+                    label: "+X/-Y".into(),
+                },
+                EdgeInfo {
+                    index: 2,
+                    face_a: 0,
+                    face_b: 4,
+                    label: "+X/+Z".into(),
+                },
+                EdgeInfo {
+                    index: 3,
+                    face_a: 0,
+                    face_b: 5,
+                    label: "+X/-Z".into(),
+                },
+                EdgeInfo {
+                    index: 4,
+                    face_a: 1,
+                    face_b: 2,
+                    label: "-X/+Y".into(),
+                },
+                EdgeInfo {
+                    index: 5,
+                    face_a: 1,
+                    face_b: 3,
+                    label: "-X/-Y".into(),
+                },
+                EdgeInfo {
+                    index: 6,
+                    face_a: 1,
+                    face_b: 4,
+                    label: "-X/+Z".into(),
+                },
+                EdgeInfo {
+                    index: 7,
+                    face_a: 1,
+                    face_b: 5,
+                    label: "-X/-Z".into(),
+                },
+                EdgeInfo {
+                    index: 8,
+                    face_a: 2,
+                    face_b: 4,
+                    label: "+Y/+Z".into(),
+                },
+                EdgeInfo {
+                    index: 9,
+                    face_a: 2,
+                    face_b: 5,
+                    label: "+Y/-Z".into(),
+                },
+                EdgeInfo {
+                    index: 10,
+                    face_a: 3,
+                    face_b: 4,
+                    label: "-Y/+Z".into(),
+                },
+                EdgeInfo {
+                    index: 11,
+                    face_a: 3,
+                    face_b: 5,
+                    label: "-Y/-Z".into(),
+                },
+            ]),
+            SdfNode::Cylinder { .. } => Some(vec![
+                EdgeInfo {
+                    index: 0,
+                    face_a: 0,
+                    face_b: 1,
+                    label: "side/top".into(),
+                },
+                EdgeInfo {
+                    index: 1,
+                    face_a: 0,
+                    face_b: 2,
+                    label: "side/bottom".into(),
+                },
+            ]),
+            SdfNode::Sphere { .. } => Some(vec![]),
+            // Transforms delegate to inner
+            SdfNode::Translate(inner, _) | SdfNode::Rotate(inner, _) | SdfNode::Scale(inner, _) => {
+                inner.edge_info()
+            }
+            _ => None,
+        }
+    }
+
+    /// Find the closest face index at the given point.
+    /// Returns None for non-primitive nodes.
+    pub fn closest_face(&self, point: Vector3<f64>) -> Option<usize> {
+        match self {
+            SdfNode::Box3 {
+                center,
+                half_extents,
+            } => {
+                let d = point - center;
+                // Normalized distance to each face pair
+                let nx = d.x.abs() / half_extents.x;
+                let ny = d.y.abs() / half_extents.y;
+                let nz = d.z.abs() / half_extents.z;
+                // The face whose normalized distance is largest is the closest face
+                if nx >= ny && nx >= nz {
+                    // X faces: 0 for +X, 1 for -X
+                    if d.x >= 0.0 { Some(0) } else { Some(1) }
+                } else if ny >= nz {
+                    // Y faces: 2 for +Y, 3 for -Y
+                    if d.y >= 0.0 { Some(2) } else { Some(3) }
+                } else {
+                    // Z faces: 4 for +Z, 5 for -Z
+                    if d.z >= 0.0 { Some(4) } else { Some(5) }
+                }
+            }
+            SdfNode::Cylinder {
+                base, axis, height, ..
+            } => {
+                // Project point onto cylinder axis
+                let rel = point - base;
+                let t = rel.dot(axis);
+                // Distance along axis: 0 = bottom, height = top
+                // Radial distance handled by face_distance
+                if t < 0.0 {
+                    Some(2) // below bottom
+                } else if t > *height {
+                    Some(1) // above top
+                } else {
+                    // Compare radial vs axial proximity
+                    let axial_to_bottom = t;
+                    let axial_to_top = height - t;
+                    let axial_min = axial_to_bottom.min(axial_to_top);
+                    let radial = (rel - axis * t).norm();
+                    if radial > axial_min {
+                        Some(0) // side
+                    } else if axial_to_top < axial_to_bottom {
+                        Some(1) // top
+                    } else {
+                        Some(2) // bottom
+                    }
+                }
+            }
+            SdfNode::Sphere { .. } => Some(0),
+            // Transforms: transform point and delegate
+            SdfNode::Translate(inner, offset) => inner.closest_face(point - offset),
+            SdfNode::Rotate(inner, rotation) => inner.closest_face(rotation.inverse() * point),
+            SdfNode::Scale(inner, factor) => inner.closest_face(point / *factor),
+            _ => None,
+        }
+    }
+
+    /// Compute the signed distance from a point to a specific face.
+    /// Returns None if the face doesn't exist or this isn't a primitive.
+    pub fn face_distance(&self, point: Vector3<f64>, face_index: usize) -> Option<f64> {
+        match self {
+            SdfNode::Box3 {
+                center,
+                half_extents,
+            } => {
+                let d = point - center;
+                match face_index {
+                    0 => Some(d.x - half_extents.x),  // +X
+                    1 => Some(-d.x - half_extents.x), // -X
+                    2 => Some(d.y - half_extents.y),  // +Y
+                    3 => Some(-d.y - half_extents.y), // -Y
+                    4 => Some(d.z - half_extents.z),  // +Z
+                    5 => Some(-d.z - half_extents.z), // -Z
+                    _ => None,
+                }
+            }
+            SdfNode::Cylinder {
+                base,
+                axis,
+                radius,
+                height,
+            } => {
+                let rel = point - base;
+                let t = rel.dot(axis);
+                match face_index {
+                    0 => {
+                        // Side: radial distance from axis
+                        let proj = rel - axis * t;
+                        Some(proj.norm() - radius)
+                    }
+                    1 => {
+                        // Top cap: signed distance above top
+                        Some(t - height)
+                    }
+                    2 => {
+                        // Bottom cap: signed distance below bottom
+                        Some(-t)
+                    }
+                    _ => None,
+                }
+            }
+            SdfNode::Sphere { center, radius } => {
+                if face_index == 0 {
+                    Some((point - center).norm() - radius)
+                } else {
+                    None
+                }
+            }
+            // Transforms: transform point and delegate
+            SdfNode::Translate(inner, offset) => inner.face_distance(point - offset, face_index),
+            SdfNode::Rotate(inner, rotation) => {
+                inner.face_distance(rotation.inverse() * point, face_index)
+            }
+            SdfNode::Scale(inner, factor) => inner
+                .face_distance(point / *factor, face_index)
+                .map(|d| d * factor),
+            _ => None,
         }
     }
 

@@ -4,6 +4,7 @@ pub mod csg;
 pub mod dag;
 pub mod dual_contouring;
 pub mod export;
+pub mod feature;
 pub mod frame;
 pub mod mesh;
 pub mod obj_export;
