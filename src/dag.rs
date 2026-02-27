@@ -325,38 +325,97 @@ impl SdfNode {
                 let r = profile.radius();
                 let mut result = sharp;
 
+                // Profile-specific Lp exponent and clamping mode.
+                //
+                // G2/Chord → L2 (circle), hard clamp.
+                // G3       → L4 (squircle, G3 continuity), softplus for face curvature.
+                // Parabolic→ L3 (sin-based curvature), softplus for face curvature.
+                // Hyperbolic→ L6 (sinh-based curvature), softplus for face curvature.
+                // Others   → per-edge Newton iteration + L2 corner correction.
+                let (lp_exp, use_softplus) = match profile {
+                    crate::blend::BlendProfile::G3 { .. } => (4.0, true),
+                    crate::blend::BlendProfile::Parabolic { .. } => (3.0, true),
+                    crate::blend::BlendProfile::Hyperbolic { .. } => (6.0, true),
+                    crate::blend::BlendProfile::Cycloidal { .. } => (1.5, true),
+                    _ => (2.0, false),
+                };
+                // Profiles using only the Lp multi-face formula (no per-edge Newton).
+                let lp_only = matches!(
+                    profile,
+                    crate::blend::BlendProfile::G2 { .. }
+                        | crate::blend::BlendProfile::Chord { .. }
+                        | crate::blend::BlendProfile::G3 { .. }
+                        | crate::blend::BlendProfile::Parabolic { .. }
+                        | crate::blend::BlendProfile::Hyperbolic { .. }
+                        | crate::blend::BlendProfile::Cycloidal { .. }
+                );
+
+                // Collect unique face indices from targeted edges.
+                let mut face_indices = std::collections::BTreeSet::new();
+
                 for target in targets {
-                    // Determine which edges to process
-                    let edge_indices: Vec<usize> = if target.indices.is_empty() {
-                        // All edges
+                    let edge_idxs: Vec<usize> = if target.indices.is_empty() {
                         (0..edges.len()).collect()
                     } else {
                         target.indices.clone()
                     };
 
-                    for &edge_idx in &edge_indices {
-                        if edge_idx >= edges.len() {
+                    for &ei in &edge_idxs {
+                        if ei >= edges.len() {
                             continue;
                         }
-                        let edge = &edges[edge_idx];
+                        let edge = &edges[ei];
+                        face_indices.insert(edge.face_a);
+                        face_indices.insert(edge.face_b);
 
-                        // Get face distances
-                        let d1 = match inner.face_distance(point, edge.face_a) {
-                            Some(d) => d,
-                            None => continue,
-                        };
-                        let d2 = match inner.face_distance(point, edge.face_b) {
-                            Some(d) => d,
-                            None => continue,
-                        };
-
-                        // Only blend if near the edge: both face distances
-                        // must be within one radius of their respective planes.
-                        if d1 > -r && d2 > -r && d1 < r && d2 < r {
-                            let blended = crate::blend::blend_intersection(d1, d2, profile);
-                            result = result.max(blended);
+                        // Per-edge Newton-iteration blend (G1, Cycloidal, Chamfer).
+                        if !lp_only {
+                            if let (Some(d1), Some(d2)) = (
+                                inner.face_distance(point, edge.face_a),
+                                inner.face_distance(point, edge.face_b),
+                            ) {
+                                if d1 > -r && d2 > -r && d1 < r && d2 < r {
+                                    let blended =
+                                        crate::blend::blend_intersection(d1, d2, profile);
+                                    result = result.max(blended);
+                                }
+                            }
                         }
                     }
+                }
+
+                // Multi-face Lp blend: generalizes G2 circular arc to higher-
+                // order continuity via superellipse norms.
+                //
+                // u_i = clamp(d_i + r):
+                //   hard clamp  → max(d_i + r, 0): exact SDF, flat faces.
+                //   softplus    → ln(1+exp(k(d_i+r)))/k: smoothed, faces curve.
+                //
+                // blend = (Σ u_i^p)^(1/p) - r
+                let steepness = 3.0 / r;
+                let mut sum_p = 0.0_f64;
+                for &fi in &face_indices {
+                    if let Some(d) = inner.face_distance(point, fi) {
+                        let u = if use_softplus {
+                            let x = (d + r) * steepness;
+                            if x > 20.0 {
+                                d + r
+                            } else if x < -20.0 {
+                                0.0
+                            } else {
+                                (1.0_f64 + x.exp()).ln() / steepness
+                            }
+                        } else {
+                            (d + r).max(0.0)
+                        };
+                        if u > 1e-15 {
+                            sum_p += u.powf(lp_exp);
+                        }
+                    }
+                }
+                if sum_p > 0.0 {
+                    let lp_blend = sum_p.powf(1.0 / lp_exp) - r;
+                    result = result.max(lp_blend);
                 }
 
                 result
@@ -656,26 +715,28 @@ impl SdfNode {
 
             // -- CSG -------------------------------------------------------
             SdfNode::Union(a, b) => {
-                if a.evaluate(point) <= b.evaluate(point) {
-                    a.gradient(point)
-                } else {
-                    b.gradient(point)
-                }
+                csg_gradient_min(a, b, point)
             }
             SdfNode::Intersection(a, b) => {
-                if a.evaluate(point) >= b.evaluate(point) {
-                    a.gradient(point)
-                } else {
-                    b.gradient(point)
-                }
+                csg_gradient_max(a, b, point)
             }
             SdfNode::Difference(a, b) => {
+                // difference = max(a, -b), so negate b's gradient
                 let da = a.evaluate(point);
                 let db_neg = -b.evaluate(point);
-                if da > db_neg {
+                let eps = 0.05;
+                let diff = da - db_neg;
+                if diff > eps {
                     a.gradient(point)
-                } else {
+                } else if diff < -eps {
                     -b.gradient(point)
+                } else {
+                    let t = (diff + eps) / (2.0 * eps);
+                    let ga = a.gradient(point);
+                    let gb = -b.gradient(point);
+                    let blended = ga * t + gb * (1.0 - t);
+                    let len = blended.norm();
+                    if len > 1e-10 { blended / len } else { ga }
                 }
             }
 
@@ -1082,6 +1143,56 @@ impl SdfNode {
 /// Used for complex primitives (Box3, Cylinder, etc.), smooth CSG, 2D->3D
 /// operations, and opaque Custom nodes where analytical gradients are either
 /// impractical or error-prone.
+/// Blended gradient for `min(a, b)` (Union).
+///
+/// When `|a - b|` is small (near the min-boundary), hard-switching between
+/// a's and b's gradient causes the QEF solver to place vertices incorrectly
+/// at concave edges.  Instead, we linearly blend the gradients in a narrow
+/// transition band, giving a smooth (if approximate) normal.
+fn csg_gradient_min(a: &SdfNode, b: &SdfNode, point: Vector3<f64>) -> Vector3<f64> {
+    let da = a.evaluate(point);
+    let db = b.evaluate(point);
+    // eps must be wide enough that the DC mesher's QEF solver sees blended
+    // normals across several cells at the Union boundary.  At resolution 128
+    // over a typical 20-30 unit bbox, cells are ~0.2 units.  eps = 0.05 gives
+    // a 0.1-unit transition band — about half a cell on each side.
+    let eps = 0.05;
+    let diff = da - db; // negative → a is closer (winner for min)
+    if diff < -eps {
+        a.gradient(point)
+    } else if diff > eps {
+        b.gradient(point)
+    } else {
+        // Blend zone: t=0 → a wins, t=1 → b wins
+        let t = (diff + eps) / (2.0 * eps);
+        let ga = a.gradient(point);
+        let gb = b.gradient(point);
+        let blended = ga * (1.0 - t) + gb * t;
+        let len = blended.norm();
+        if len > 1e-10 { blended / len } else { ga }
+    }
+}
+
+/// Blended gradient for `max(a, b)` (Intersection).
+fn csg_gradient_max(a: &SdfNode, b: &SdfNode, point: Vector3<f64>) -> Vector3<f64> {
+    let da = a.evaluate(point);
+    let db = b.evaluate(point);
+    let eps = 0.05;
+    let diff = da - db; // positive → a is larger (winner for max)
+    if diff > eps {
+        a.gradient(point)
+    } else if diff < -eps {
+        b.gradient(point)
+    } else {
+        let t = (diff + eps) / (2.0 * eps);
+        let ga = a.gradient(point);
+        let gb = b.gradient(point);
+        let blended = ga * t + gb * (1.0 - t);
+        let len = blended.norm();
+        if len > 1e-10 { blended / len } else { ga }
+    }
+}
+
 fn central_diff_gradient(node: &SdfNode, point: Vector3<f64>) -> Vector3<f64> {
     let eps = 1e-6;
     let dx = node.evaluate(point + Vector3::new(eps, 0.0, 0.0))

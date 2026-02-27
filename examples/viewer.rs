@@ -171,7 +171,7 @@ fn generate_models(dir: &PathBuf) {
             Vector3::new(-6.0, -6.0, -6.0),
             Vector3::new(24.0, 6.0, 6.0),
         ),
-        // Rotate: original elongated box + 45-degree rotated copy (both at origin, overlap shows the rotation)
+        // Rotate: two boxes unioned at 45° — demonstrates the Rotate transform
         (
             "17_rotate",
             Box::new(Union::new(
@@ -466,6 +466,39 @@ fn generate_models(dir: &PathBuf) {
         (
             "35_rounded_box_simple",
             Shape::box3(5.0, 5.0, 5.0).round(0.5),
+        ),
+        // ─── Rotated union (builder API — analytical gradients for clean edges) ───
+        (
+            "17b_rotated_union",
+            Shape::box3(12.0, 2.0, 2.0)
+                .union(Shape::box3(12.0, 2.0, 2.0).rotate_z(PI / 4.0)),
+        ),
+        // ─── Profile comparison series: each profile on the same 5×5×5 box ───
+        // G1 tangent-continuous fillet
+        (
+            "36_g1_fillet_box",
+            Shape::box3(5.0, 5.0, 5.0).fillet(blend::g1(1.0), vec![ft(0, 0).all_edges()]),
+        ),
+        // G3 curvature-rate continuous fillet
+        (
+            "37_g3_fillet_box",
+            Shape::box3(5.0, 5.0, 5.0).fillet(blend::g3(1.0), vec![ft(0, 0).all_edges()]),
+        ),
+        // Parabolic fillet
+        (
+            "38_parabolic_fillet_box",
+            Shape::box3(5.0, 5.0, 5.0).fillet(blend::parabolic(1.0), vec![ft(0, 0).all_edges()]),
+        ),
+        // Hyperbolic fillet (asymptote 0.5 gives a concave profile)
+        (
+            "39_hyperbolic_fillet_box",
+            Shape::box3(5.0, 5.0, 5.0)
+                .fillet(blend::hyperbolic(1.0, 0.5), vec![ft(0, 0).all_edges()]),
+        ),
+        // Cycloidal fillet
+        (
+            "40_cycloidal_fillet_box",
+            Shape::box3(5.0, 5.0, 5.0).fillet(blend::cycloidal(1.0), vec![ft(0, 0).all_edges()]),
         ),
     ];
 

@@ -278,10 +278,14 @@ fn blend_intersection_g1(d1: f64, d2: f64, r: f64) -> f64 {
         return sharp;
     }
 
-    // Control points for the G1 Bezier in (d1, d2) space.
+    // Control points for the G1 Bezier quarter-circle approximation in (d1, d2)
+    // space.  The arc goes from (-r, 0) to (0, -r) and is centered at (-r, -r).
+    // In local coords (centered at (-r,-r)), the standard Bezier quarter-circle
+    // from (0, r) to (r, 0) has control points (κr, r), (r, κr).
+    // Translating back: p1 = (-r + κr, 0), p2 = (0, -r + κr).
     let p0 = [-r, 0.0];
-    let p1 = [-r, -r * KAPPA];
-    let p2 = [-r * KAPPA, -r];
+    let p1 = [-r + r * KAPPA, 0.0];
+    let p2 = [0.0, -r + r * KAPPA];
     let p3 = [0.0, -r];
 
     let q = [d1, d2];
@@ -567,7 +571,17 @@ fn blend_intersection_cycloidal(d1: f64, d2: f64, r: f64) -> f64 {
     let diff = [q[0] - nearest[0], q[1] - nearest[1]];
     let dist = (diff[0] * diff[0] + diff[1] * diff[1]).sqrt();
 
-    let sign = cross2(tangent, diff);
+    // At cusps (u ≈ 0 or u ≈ 1), the tangent is zero.  Use a slightly offset
+    // parameter to obtain a non-degenerate tangent for sign determination.
+    let tangent_len_sq = tangent[0] * tangent[0] + tangent[1] * tangent[1];
+    let sign = if tangent_len_sq > 1e-20 {
+        cross2(tangent, diff)
+    } else {
+        let nudge = if u < 0.5 { 1e-4 } else { 1.0 - 1e-4 };
+        let nt = nudge * pi;
+        let fallback = [r * (1.0 - nt.cos()), -r * nt.sin() * pi / 2.0];
+        cross2(fallback, diff)
+    };
     let signed_dist = if sign >= 0.0 { dist } else { -dist };
     sharp.max(signed_dist)
 }
