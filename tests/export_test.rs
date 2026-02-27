@@ -5,7 +5,6 @@ use crusst::export::write_stl;
 use std::path::PathBuf;
 
 #[test]
-#[ignore]
 fn write_stl_produces_valid_file() {
     let sphere = Sphere::new(Vector3::zeros(), 5.0);
     let mesh = extract_mesh(
