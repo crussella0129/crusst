@@ -1,5 +1,5 @@
-use crusst::shape::{Sdf, Sphere, Box3};
 use crusst::mesh::extract_mesh;
+use crusst::shape::{Box3, Sphere};
 use nalgebra::Vector3;
 use std::collections::HashMap;
 
@@ -32,20 +32,49 @@ fn diagnose(name: &str, mesh: &crusst::mesh::TriangleMesh) {
     println!("=== {} ===", name);
     println!("  Triangles: {}, Vertices: {}", tri_count, vert_count);
     println!("  Edges: {} total", total);
-    println!("  Boundary (1 tri):    {} ({:.1}%)", boundary, boundary as f64 / total as f64 * 100.0);
-    println!("  Manifold (2 tri):    {} ({:.1}%)", manifold, manifold as f64 / total as f64 * 100.0);
-    println!("  Non-manifold (>2):   {} ({:.1}%)", nonmanifold, nonmanifold as f64 / total as f64 * 100.0);
+    println!(
+        "  Boundary (1 tri):    {} ({:.1}%)",
+        boundary,
+        boundary as f64 / total as f64 * 100.0
+    );
+    println!(
+        "  Manifold (2 tri):    {} ({:.1}%)",
+        manifold,
+        manifold as f64 / total as f64 * 100.0
+    );
+    println!(
+        "  Non-manifold (>2):   {} ({:.1}%)",
+        nonmanifold,
+        nonmanifold as f64 / total as f64 * 100.0
+    );
     println!("  Duplicate positions: {}", dup_positions);
-    println!("  WATERTIGHT: {}", if boundary == 0 && nonmanifold == 0 { "YES" } else { "NO" });
+    println!(
+        "  WATERTIGHT: {}",
+        if boundary == 0 && nonmanifold == 0 {
+            "YES"
+        } else {
+            "NO"
+        }
+    );
     println!();
 }
 
 fn main() {
     let sphere = Sphere::new(Vector3::zeros(), 10.0);
-    let mesh = extract_mesh(&sphere, Vector3::from_element(-12.0), Vector3::from_element(12.0), 32);
+    let mesh = extract_mesh(
+        &sphere,
+        Vector3::from_element(-12.0),
+        Vector3::from_element(12.0),
+        32,
+    );
     diagnose("Sphere (res=32)", &mesh);
 
     let box3 = Box3::new(Vector3::zeros(), Vector3::new(5.0, 5.0, 5.0));
-    let mesh = extract_mesh(&box3, Vector3::from_element(-7.0), Vector3::from_element(7.0), 32);
+    let mesh = extract_mesh(
+        &box3,
+        Vector3::from_element(-7.0),
+        Vector3::from_element(7.0),
+        32,
+    );
     diagnose("Box (res=32)", &mesh);
 }

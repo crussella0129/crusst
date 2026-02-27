@@ -67,13 +67,22 @@ pub struct BBox3 {
 }
 
 impl BBox3 {
-    pub fn new(min: Vector3<f64>, max: Vector3<f64>) -> Self { Self { min, max } }
-    pub fn center(&self) -> Vector3<f64> { (self.min + self.max) * 0.5 }
-    pub fn size(&self) -> Vector3<f64> { self.max - self.min }
+    pub fn new(min: Vector3<f64>, max: Vector3<f64>) -> Self {
+        Self { min, max }
+    }
+    pub fn center(&self) -> Vector3<f64> {
+        (self.min + self.max) * 0.5
+    }
+    pub fn size(&self) -> Vector3<f64> {
+        self.max - self.min
+    }
     pub fn contains(&self, p: Vector3<f64>) -> bool {
-        p.x >= self.min.x && p.x <= self.max.x &&
-        p.y >= self.min.y && p.y <= self.max.y &&
-        p.z >= self.min.z && p.z <= self.max.z
+        p.x >= self.min.x
+            && p.x <= self.max.x
+            && p.y >= self.min.y
+            && p.y <= self.max.y
+            && p.z >= self.min.z
+            && p.z <= self.max.z
     }
     /// Return the 8 corner vertices of this bounding box.
     pub fn corners(&self) -> [Vector3<f64>; 8] {
@@ -120,18 +129,31 @@ impl Interval {
         debug_assert!(lo <= hi, "Interval lo ({lo}) must be <= hi ({hi})");
         Self { lo, hi }
     }
-    pub fn entire() -> Self { Self { lo: f64::NEG_INFINITY, hi: f64::INFINITY } }
-    pub fn definitely_positive(&self) -> bool { self.lo > 0.0 }
-    pub fn definitely_negative(&self) -> bool { self.hi < 0.0 }
+    pub fn entire() -> Self {
+        Self {
+            lo: f64::NEG_INFINITY,
+            hi: f64::INFINITY,
+        }
+    }
+    pub fn definitely_positive(&self) -> bool {
+        self.lo > 0.0
+    }
+    pub fn definitely_negative(&self) -> bool {
+        self.hi < 0.0
+    }
 
     // -- Interval-interval arithmetic --
-
+    // Named methods rather than std::ops traits because interval semantics
+    // differ from scalar arithmetic (e.g., sub swaps hi/lo of the rhs).
+    #[allow(clippy::should_implement_trait)]
     pub fn add(self, other: Interval) -> Interval {
         Interval::new(self.lo + other.lo, self.hi + other.hi)
     }
+    #[allow(clippy::should_implement_trait)]
     pub fn sub(self, other: Interval) -> Interval {
         Interval::new(self.lo - other.hi, self.hi - other.lo)
     }
+    #[allow(clippy::should_implement_trait)]
     pub fn mul(self, other: Interval) -> Interval {
         let a = self.lo * other.lo;
         let b = self.lo * other.hi;
@@ -157,6 +179,7 @@ impl Interval {
     pub fn sqrt(self) -> Interval {
         Interval::new(self.lo.max(0.0).sqrt(), self.hi.max(0.0).sqrt())
     }
+    #[allow(clippy::should_implement_trait)]
     pub fn neg(self) -> Interval {
         Interval::new(-self.hi, -self.lo)
     }
@@ -202,6 +225,10 @@ pub struct MeshSettings {
 
 impl Default for MeshSettings {
     fn default() -> Self {
-        Self { max_depth: 8, min_depth: 3, edge_tolerance: 1e-6 }
+        Self {
+            max_depth: 8,
+            min_depth: 3,
+            edge_tolerance: 1e-6,
+        }
     }
 }

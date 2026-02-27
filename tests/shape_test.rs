@@ -1,6 +1,6 @@
 use approx::assert_relative_eq;
+use crusst::shape::{Difference, Sdf, Sphere, Union};
 use nalgebra::Vector3;
-use crusst::shape::{Sdf, Sphere, Box3, Union, Difference};
 
 #[test]
 fn sphere_shape_evaluates() {

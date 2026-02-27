@@ -154,7 +154,7 @@ impl Octree {
                 .as_ref()
                 .unwrap()
                 .iter()
-                .map(|c| Self::count_leaves(c))
+                .map(Self::count_leaves)
                 .sum()
         }
     }
@@ -167,7 +167,7 @@ impl Octree {
                 .as_ref()
                 .unwrap()
                 .iter()
-                .map(|c| Self::count_surface_cells(c))
+                .map(Self::count_surface_cells)
                 .sum()
         }
     }
