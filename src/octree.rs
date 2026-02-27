@@ -86,6 +86,12 @@ impl Octree {
         // Pruning via interval arithmetic: if the interval over this cell
         // is entirely positive (outside) or entirely negative (inside),
         // and we've reached min_depth, stop subdividing.
+        //
+        // When the interval spans zero but no corner shows a sign change,
+        // the surface passes through the cell between corners (e.g., at an
+        // acute concave Union edge).  Force subdivision so finer cells can
+        // catch the sign change.
+        let mut interval_spans_zero = false;
         if depth >= settings.min_depth && !has_sign_change {
             let iv = node.interval_evaluate(bbox);
             if iv.definitely_positive() || iv.definitely_negative() {
@@ -96,11 +102,15 @@ impl Octree {
                     children: None,
                 };
             }
+            interval_spans_zero = true;
         }
 
-        // Subdivide if there are sign changes (or we haven't reached min_depth)
+        // Subdivide if there are sign changes (or we haven't reached min_depth,
+        // or interval arithmetic detects a possible surface that corners missed)
         // and we haven't hit the maximum depth yet.
-        if depth < settings.max_depth && (has_sign_change || depth < settings.min_depth) {
+        if depth < settings.max_depth
+            && (has_sign_change || depth < settings.min_depth || interval_spans_zero)
+        {
             let octants = bbox.octants();
             let children: [OctreeCell; 8] = std::array::from_fn(|i| {
                 let child_bbox = &octants[i];

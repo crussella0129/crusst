@@ -655,8 +655,22 @@ fn build_cell_from_sdf(
         corners.iter().any(|&c| (c > 0.0) != first_sign)
     };
 
-    // No interval pruning for trait objects. Subdivide if sign change or below min_depth.
-    if depth < settings.max_depth && (has_sign_change || depth < settings.min_depth) {
+    // When all corners share the same sign but one is very close to zero,
+    // the surface may pass through the cell in a narrow region that corners
+    // miss (e.g., the acute inner edge of a Union).  Force subdivision so
+    // finer cells can resolve the gap.
+    let near_surface = if !has_sign_change && depth >= settings.min_depth {
+        let cell_diag = (bbox.max - bbox.min).norm();
+        let closest_to_zero = corners.iter().map(|c| c.abs()).fold(f64::MAX, f64::min);
+        closest_to_zero < cell_diag
+    } else {
+        false
+    };
+
+    // No interval pruning for trait objects. Subdivide if sign change,
+    // below min_depth, or near-surface heuristic fires.
+    if depth < settings.max_depth && (has_sign_change || depth < settings.min_depth || near_surface)
+    {
         let octants = bbox.octants();
         let children: [OctreeCell; 8] =
             std::array::from_fn(|i| build_cell_from_sdf(sdf, &octants[i], depth + 1, settings));
