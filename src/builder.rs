@@ -17,8 +17,10 @@
 
 use std::sync::Arc;
 use nalgebra::{Rotation3, Vector3};
+use rayon::prelude::*;
 use crate::dag::SdfNode;
 use crate::types::{TriangleMesh, MeshSettings, BBox3};
+use crate::voxel::VoxelGrid;
 use crate::dual_contouring::extract_mesh_adaptive;
 
 /// A composable, immutable shape backed by an SDF expression DAG.
@@ -561,6 +563,51 @@ impl Shape {
     pub fn export_stl(&self, path: &str) -> std::io::Result<()> {
         let mesh = self.mesh(MeshSettings::default());
         crate::export::write_stl(&mesh, std::path::Path::new(path))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Voxelization
+// ---------------------------------------------------------------------------
+
+impl Shape {
+    /// Sample the SDF onto a regular 3D grid with the given `voxel_size`.
+    ///
+    /// The grid covers the shape's bounding box plus one voxel of padding
+    /// on each side. Evaluation is parallelized across voxels with rayon.
+    pub fn voxelize(&self, voxel_size: f64) -> VoxelGrid {
+        let bbox = self.bounding_box();
+        let pad = Vector3::new(voxel_size, voxel_size, voxel_size);
+        let origin = bbox.min - pad;
+        let extent = bbox.max + pad - origin;
+
+        let nx = (extent.x / voxel_size).ceil() as usize;
+        let ny = (extent.y / voxel_size).ceil() as usize;
+        let nz = (extent.z / voxel_size).ceil() as usize;
+        let total = nx * ny * nz;
+
+        let node = &self.node;
+        let data: Vec<f32> = (0..total)
+            .into_par_iter()
+            .map(|idx| {
+                let ix = idx / (ny * nz);
+                let iy = (idx / nz) % ny;
+                let iz = idx % nz;
+                let world = origin + Vector3::new(
+                    (ix as f64 + 0.5) * voxel_size,
+                    (iy as f64 + 0.5) * voxel_size,
+                    (iz as f64 + 0.5) * voxel_size,
+                );
+                node.evaluate(world) as f32
+            })
+            .collect();
+
+        VoxelGrid {
+            resolution: [nx, ny, nz],
+            voxel_size,
+            origin,
+            data,
+        }
     }
 }
 
