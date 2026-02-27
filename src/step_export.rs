@@ -34,7 +34,20 @@ pub fn classify(node: &SdfNode) -> ExportTier {
 
         // Rigid transforms inherit the inner node's tier
         SdfNode::Translate(inner, _) => classify(inner),
-        SdfNode::Rotate(inner, _) => classify(inner),
+        SdfNode::Rotate(inner, _) => {
+            // Only sphere is rotation-invariant; others need tessellation
+            // because unwrap_transforms does not compose rotations.
+            match classify(inner) {
+                ExportTier::Exact => {
+                    if matches!(unwrap_transforms(inner).0, SdfNode::Sphere { .. }) {
+                        ExportTier::Exact
+                    } else {
+                        ExportTier::Tessellated
+                    }
+                }
+                other => other,
+            }
+        }
         SdfNode::Scale(inner, _) => classify(inner),
 
         // Everything else → tessellated fallback
@@ -113,8 +126,44 @@ pub fn write_step(mesh: &TriangleMesh, path: &Path) -> std::io::Result<()> {
     let dir_x_id = next_id();
     writeln!(file, "#{}=DIRECTION('',(1.E0,0.E0,0.E0));", dir_x_id)?;
 
-    // Build edges (deduplicated by vertex pair)
+    // Pre-create all unique edges (deduplicated by vertex pair) so that I/O
+    // errors can be propagated with `?` instead of `.unwrap()` in a closure.
     let mut edge_map: HashMap<(usize, usize), u64> = HashMap::new();
+
+    for chunk in mesh.indices.chunks(3) {
+        let (ai, bi, ci) = (chunk[0] as usize, chunk[1] as usize, chunk[2] as usize);
+        for &(v0, v1) in &[(ai, bi), (bi, ci), (ci, ai)] {
+            let key = if v0 < v1 { (v0, v1) } else { (v1, v0) };
+            if edge_map.contains_key(&key) { continue; }
+
+            let va = &mesh.vertices[key.0];
+            let vb = &mesh.vertices[key.1];
+            let dx = vb.x - va.x;
+            let dy = vb.y - va.y;
+            let dz = vb.z - va.z;
+            let len = (dx*dx + dy*dy + dz*dz).sqrt();
+
+            let line_dir_id = next_id();
+            if len > 1e-12 {
+                writeln!(file, "#{}=DIRECTION('',({:.15E},{:.15E},{:.15E}));",
+                    line_dir_id, dx/len, dy/len, dz/len)?;
+            } else {
+                writeln!(file, "#{}=DIRECTION('',(1.E0,0.E0,0.E0));", line_dir_id)?;
+            }
+
+            let vec_id = next_id();
+            writeln!(file, "#{}=VECTOR('',#{},1.E0);", vec_id, line_dir_id)?;
+
+            let line_id = next_id();
+            writeln!(file, "#{}=LINE('',#{},#{});",
+                line_id, point_ids[key.0], vec_id)?;
+
+            let edge_id = next_id();
+            writeln!(file, "#{}=EDGE_CURVE('',#{},#{},#{},.T.);",
+                edge_id, vertex_ids[key.0], vertex_ids[key.1], line_id)?;
+            edge_map.insert(key, edge_id);
+        }
+    }
 
     let tri_count = mesh.indices.len() / 3;
     let mut face_ids: Vec<u64> = Vec::with_capacity(tri_count);
@@ -127,33 +176,7 @@ pub fn write_step(mesh: &TriangleMesh, path: &Path) -> std::io::Result<()> {
 
         for &(v0, v1) in &edges {
             let key = if v0 < v1 { (v0, v1) } else { (v1, v0) };
-            let eid = *edge_map.entry(key).or_insert_with(|| {
-                let line_dir_id = next_id();
-                let va = &mesh.vertices[key.0];
-                let vb = &mesh.vertices[key.1];
-                let dx = vb.x - va.x;
-                let dy = vb.y - va.y;
-                let dz = vb.z - va.z;
-                let len = (dx*dx + dy*dy + dz*dz).sqrt();
-                if len > 1e-12 {
-                    writeln!(file, "#{}=DIRECTION('',({:.15E},{:.15E},{:.15E}));",
-                        line_dir_id, dx/len, dy/len, dz/len).unwrap();
-                } else {
-                    writeln!(file, "#{}=DIRECTION('',(1.E0,0.E0,0.E0));", line_dir_id).unwrap();
-                }
-
-                let vec_id = next_id();
-                writeln!(file, "#{}=VECTOR('',#{},1.E0);", vec_id, line_dir_id).unwrap();
-
-                let line_id = next_id();
-                writeln!(file, "#{}=LINE('',#{},#{});",
-                    line_id, point_ids[key.0], vec_id).unwrap();
-
-                let edge_id = next_id();
-                writeln!(file, "#{}=EDGE_CURVE('',#{},#{},#{},.T.);",
-                    edge_id, vertex_ids[key.0], vertex_ids[key.1], line_id).unwrap();
-                edge_id
-            });
+            let eid = edge_map[&key];
             edge_entity_ids.push((eid, v0 == key.0));
         }
 
@@ -824,17 +847,19 @@ fn write_step_footer(
     writeln!(file, "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
         axis_place_id, origin_id, dir_z_id, dir_x_id)?;
 
-    // Geometric context
+    // Pre-allocate IDs for the geometric context group to avoid fragile
+    // forward references (geo_context references uncertainty and length_unit).
     let geo_context_id = next_id();
+    let uncertainty_id = next_id();
+    let length_unit_id = next_id();
+
     writeln!(file,
         "#{}=(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#{}))GLOBAL_UNIT_ASSIGNED_CONTEXT((#{})));",
-        geo_context_id, geo_context_id + 1, geo_context_id + 2)?;
+        geo_context_id, uncertainty_id, length_unit_id)?;
 
-    let uncertainty_id = next_id();
     writeln!(file, "#{}=UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-7),#{},'distance accuracy');",
-        uncertainty_id, uncertainty_id + 1)?;
+        uncertainty_id, length_unit_id)?;
 
-    let length_unit_id = next_id();
     writeln!(file, "#{}=(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.));", length_unit_id)?;
 
     // Shape representation
@@ -842,16 +867,17 @@ fn write_step_footer(
     writeln!(file, "#{}=SHAPE_REPRESENTATION('Crusst_Shape',(#{},#{}),#{});",
         shape_rep_id, axis_place_id, brep_id, geo_context_id)?;
 
-    // Product definition
+    // Pre-allocate product definition IDs to avoid forward references.
     let product_id = next_id();
-    writeln!(file, "#{}=PRODUCT('Crusst_Part','Crusst SDF Part','',(#{}));",
-        product_id, product_id + 1)?;
-
     let product_context_id = next_id();
-    writeln!(file, "#{}=PRODUCT_CONTEXT('',#{},'mechanical');",
-        product_context_id, product_context_id + 1)?;
-
     let app_context_id = next_id();
+
+    writeln!(file, "#{}=PRODUCT('Crusst_Part','Crusst SDF Part','',(#{}));",
+        product_id, product_context_id)?;
+
+    writeln!(file, "#{}=PRODUCT_CONTEXT('',#{},'mechanical');",
+        product_context_id, app_context_id)?;
+
     writeln!(file, "#{}=APPLICATION_CONTEXT('automotive design');", app_context_id)?;
 
     let pdf_id = next_id();
