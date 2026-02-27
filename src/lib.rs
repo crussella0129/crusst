@@ -13,3 +13,4 @@ pub mod step_export;
 pub mod octree;
 pub mod qef;
 pub mod dual_contouring;
+pub mod builder;
