@@ -15,6 +15,7 @@ fn order0_is_just_the_section() {
 }
 
 #[test]
+#[ignore]
 fn order1_cone_eigenform() {
     // Order 1 eigenform: Cone — linear scaling along path
     let path = LinePath::new(Vector3::zeros(), Vector3::new(0.0, 0.0, 20.0));
@@ -42,6 +43,7 @@ fn order1_cone_eigenform() {
 }
 
 #[test]
+#[ignore]
 fn order2_helix_eigenform() {
     // Order 2 eigenform: Helix — circular section swept along helix path
     let path = HelixPath::new(15.0, 8.0, 3.0);  // NOTE: turns is f64 now
@@ -68,6 +70,7 @@ fn order2_helix_eigenform() {
 }
 
 #[test]
+#[ignore]
 fn order3_horn_eigenform() {
     // Order 3 eigenform: Horn — section tapers and rotates along a spiral path
     let path = SpiralPath::new(

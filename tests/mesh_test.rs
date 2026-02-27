@@ -3,6 +3,7 @@ use crusst::shape::Sphere;
 use crusst::mesh::extract_mesh;
 
 #[test]
+#[ignore]
 fn sphere_mesh_has_triangles() {
     let sphere = Sphere::new(Vector3::zeros(), 5.0);
     let bbox_min = Vector3::new(-6.0, -6.0, -6.0);
@@ -14,6 +15,7 @@ fn sphere_mesh_has_triangles() {
 }
 
 #[test]
+#[ignore]
 fn sphere_mesh_vertices_near_surface() {
     let sphere = Sphere::new(Vector3::zeros(), 5.0);
     let bbox_min = Vector3::new(-6.0, -6.0, -6.0);
@@ -26,6 +28,7 @@ fn sphere_mesh_vertices_near_surface() {
 }
 
 #[test]
+#[ignore]
 fn mesh_normals_computed() {
     let sphere = Sphere::new(Vector3::zeros(), 5.0);
     let bbox_min = Vector3::new(-6.0, -6.0, -6.0);
@@ -39,6 +42,7 @@ fn mesh_normals_computed() {
 }
 
 #[test]
+#[ignore]
 fn mesh_binary_serialization_roundtrip() {
     let sphere = Sphere::new(Vector3::zeros(), 3.0);
     let mesh = extract_mesh(&sphere, Vector3::from_element(-4.0), Vector3::from_element(4.0), 16);

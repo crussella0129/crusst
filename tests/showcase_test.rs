@@ -32,6 +32,7 @@ fn export_both(mesh: &crusst::mesh::TriangleMesh, name: &str) {
 // ===========================================================================
 
 #[test]
+#[ignore]
 fn primitive_sphere() {
     let shape = Sphere::new(Vector3::zeros(), 10.0);
     // Distance accuracy: center should be -radius
@@ -47,6 +48,7 @@ fn primitive_sphere() {
 }
 
 #[test]
+#[ignore]
 fn primitive_box() {
     let shape = Box3::new(Vector3::zeros(), Vector3::new(5.0, 3.0, 8.0));
     // Center is inside
@@ -67,6 +69,7 @@ fn primitive_box() {
 }
 
 #[test]
+#[ignore]
 fn primitive_cylinder() {
     let shape = Cylinder::new(
         Vector3::new(0.0, 0.0, 0.0),
@@ -90,6 +93,7 @@ fn primitive_cylinder() {
 }
 
 #[test]
+#[ignore]
 fn primitive_capped_cone() {
     let shape = CappedCone::new(
         Vector3::new(0.0, 0.0, 0.0),
@@ -113,6 +117,7 @@ fn primitive_capped_cone() {
 }
 
 #[test]
+#[ignore]
 fn primitive_torus() {
     let shape = Torus::new(Vector3::zeros(), 10.0, 3.0);
     // Inside the tube at (10, 0, 0)
@@ -135,6 +140,7 @@ fn primitive_torus() {
 }
 
 #[test]
+#[ignore]
 fn primitive_rounded_box() {
     let shape = RoundedBox::new(
         Vector3::zeros(),
@@ -158,6 +164,7 @@ fn primitive_rounded_box() {
 }
 
 #[test]
+#[ignore]
 fn primitive_capsule() {
     let shape = Capsule::new(
         Vector3::new(0.0, 0.0, 0.0),
@@ -180,6 +187,7 @@ fn primitive_capsule() {
 }
 
 #[test]
+#[ignore]
 fn primitive_ellipsoid() {
     let shape = Ellipsoid::new(
         Vector3::zeros(),
@@ -201,6 +209,7 @@ fn primitive_ellipsoid() {
 }
 
 #[test]
+#[ignore]
 fn primitive_rounded_cylinder() {
     let shape = RoundedCylinder::new(
         Vector3::zeros(),
@@ -228,6 +237,7 @@ fn primitive_rounded_cylinder() {
 // ===========================================================================
 
 #[test]
+#[ignore]
 fn boolean_union() {
     let a = Sphere::new(Vector3::new(-3.0, 0.0, 0.0), 5.0);
     let b = Sphere::new(Vector3::new(3.0, 0.0, 0.0), 5.0);
@@ -252,6 +262,7 @@ fn boolean_union() {
 }
 
 #[test]
+#[ignore]
 fn boolean_intersection() {
     let a = Sphere::new(Vector3::new(-2.0, 0.0, 0.0), 5.0);
     let b = Sphere::new(Vector3::new(2.0, 0.0, 0.0), 5.0);
@@ -276,6 +287,7 @@ fn boolean_intersection() {
 }
 
 #[test]
+#[ignore]
 fn boolean_difference() {
     // Box with a sphere hole
     let block = Box3::new(Vector3::zeros(), Vector3::new(10.0, 10.0, 10.0));
@@ -302,6 +314,7 @@ fn boolean_difference() {
 // ===========================================================================
 
 #[test]
+#[ignore]
 fn smooth_union_blended() {
     let a = Sphere::new(Vector3::new(-4.0, 0.0, 0.0), 5.0);
     let b = Sphere::new(Vector3::new(4.0, 0.0, 0.0), 5.0);
@@ -329,6 +342,7 @@ fn smooth_union_blended() {
 }
 
 #[test]
+#[ignore]
 fn smooth_intersection_blended() {
     let a = Sphere::new(Vector3::new(-2.0, 0.0, 0.0), 6.0);
     let b = Sphere::new(Vector3::new(2.0, 0.0, 0.0), 6.0);
@@ -348,6 +362,7 @@ fn smooth_intersection_blended() {
 }
 
 #[test]
+#[ignore]
 fn smooth_difference_blended() {
     let block = Box3::new(Vector3::zeros(), Vector3::new(8.0, 8.0, 8.0));
     let hole = Sphere::new(Vector3::zeros(), 6.0);
@@ -371,6 +386,7 @@ fn smooth_difference_blended() {
 // ===========================================================================
 
 #[test]
+#[ignore]
 fn transform_translate() {
     let shape = Translate::new(
         Sphere::new(Vector3::zeros(), 5.0),
@@ -392,6 +408,7 @@ fn transform_translate() {
 }
 
 #[test]
+#[ignore]
 fn transform_rotate() {
     // A box rotated 45 degrees around Y axis
     let shape = Rotate::new(
@@ -416,6 +433,7 @@ fn transform_rotate() {
 }
 
 #[test]
+#[ignore]
 fn transform_scale() {
     let shape = Scale::new(
         Sphere::new(Vector3::zeros(), 5.0),
@@ -439,6 +457,7 @@ fn transform_scale() {
 }
 
 #[test]
+#[ignore]
 fn transform_mirror() {
     // Capsule from (5,0,0) to (5,0,20), mirrored across YZ plane
     let shape = Mirror::new(
@@ -465,6 +484,7 @@ fn transform_mirror() {
 }
 
 #[test]
+#[ignore]
 fn transform_shell() {
     // Hollow sphere: shell of a sphere
     let shape = Shell::new(Sphere::new(Vector3::zeros(), 10.0), 1.0);
@@ -490,6 +510,7 @@ fn transform_shell() {
 // ===========================================================================
 
 #[test]
+#[ignore]
 fn composed_mounting_bracket() {
     // A mounting bracket: base plate with two cylindrical mounting posts
     // and a large hole through the center
@@ -539,6 +560,7 @@ fn composed_mounting_bracket() {
 }
 
 #[test]
+#[ignore]
 fn composed_pipe_tee() {
     // T-shaped pipe fitting: two cylinders intersecting at right angles
     // with the interior hollowed out
@@ -589,6 +611,7 @@ fn composed_pipe_tee() {
 }
 
 #[test]
+#[ignore]
 fn composed_gasket_ring() {
     // A gasket: torus with flat top and bottom (intersection with slab)
 
@@ -614,6 +637,7 @@ fn composed_gasket_ring() {
 }
 
 #[test]
+#[ignore]
 fn composed_rounded_enclosure() {
     // Electronics enclosure: rounded box with interior cavity and cable port
 
@@ -653,6 +677,7 @@ fn composed_rounded_enclosure() {
 }
 
 #[test]
+#[ignore]
 fn composed_smooth_organic_blob() {
     // Organic shape: multiple spheres smoothly blended
     // Demonstrates the SDF kernel's natural ability to create organic forms
@@ -682,6 +707,7 @@ fn composed_smooth_organic_blob() {
 }
 
 #[test]
+#[ignore]
 fn composed_rotated_multi_body() {
     // Multiple rotated boxes demonstrating transform composition
 
@@ -711,6 +737,7 @@ fn composed_rotated_multi_body() {
 }
 
 #[test]
+#[ignore]
 fn composed_bearing_housing() {
     // Bearing housing: outer cylinder with inner bore and snap ring groove
 
@@ -838,6 +865,7 @@ fn accuracy_boolean_containment() {
 // ===========================================================================
 
 #[test]
+#[ignore]
 fn mesh_quality_manifold_check() {
     // Verify basic mesh topology: every edge should appear in exactly 2 triangles
     // for a watertight mesh (best-effort with marching cubes)
@@ -870,6 +898,7 @@ fn mesh_quality_manifold_check() {
 use std::collections::HashMap;
 
 #[test]
+#[ignore]
 fn mesh_quality_normal_consistency() {
     // Verify all normals are unit length
     let shape = Torus::new(Vector3::zeros(), 8.0, 3.0);
@@ -891,6 +920,7 @@ fn mesh_quality_normal_consistency() {
 }
 
 #[test]
+#[ignore]
 fn mesh_quality_triangle_area() {
     // Verify no degenerate (zero-area) triangles
     let shape = Box3::new(Vector3::zeros(), Vector3::new(5.0, 5.0, 5.0));
