@@ -6,10 +6,10 @@
 //! - Analytical gradients for QEF
 //! - DAG introspection for smart STEP export
 
-use std::sync::Arc;
-use nalgebra::{Rotation3, Vector2, Vector3};
-use crate::{csg, primitives};
 use crate::types::{BBox3, Interval};
+use crate::{csg, primitives};
+use nalgebra::{Rotation3, Vector2, Vector3};
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // SdfNode2d — 2D profile sub-enum (for Revolve / Extrude)
@@ -21,7 +21,10 @@ pub enum SdfNode2d {
     /// 2D circle.
     Circle2d { center: Vector2<f64>, radius: f64 },
     /// 2D axis-aligned rectangle.
-    Rect2d { center: Vector2<f64>, half_extents: Vector2<f64> },
+    Rect2d {
+        center: Vector2<f64>,
+        half_extents: Vector2<f64>,
+    },
     /// Boolean union of two 2D shapes.
     Union2d(Arc<SdfNode2d>, Arc<SdfNode2d>),
     /// Boolean difference of two 2D shapes (A minus B).
@@ -34,24 +37,19 @@ impl SdfNode2d {
     /// Evaluate the 2D signed distance at a point.
     pub fn evaluate(&self, point: Vector2<f64>) -> f64 {
         match self {
-            SdfNode2d::Circle2d { center, radius } => {
-                (point - center).norm() - radius
-            }
-            SdfNode2d::Rect2d { center, half_extents } => {
+            SdfNode2d::Circle2d { center, radius } => (point - center).norm() - radius,
+            SdfNode2d::Rect2d {
+                center,
+                half_extents,
+            } => {
                 let d = (point - center).abs() - half_extents;
                 let outside = Vector2::new(d.x.max(0.0), d.y.max(0.0)).norm();
                 let inside = d.x.max(d.y).min(0.0);
                 outside + inside
             }
-            SdfNode2d::Union2d(a, b) => {
-                a.evaluate(point).min(b.evaluate(point))
-            }
-            SdfNode2d::Difference2d(a, b) => {
-                a.evaluate(point).max(-b.evaluate(point))
-            }
-            SdfNode2d::Custom2d(sdf) => {
-                sdf.evaluate(point)
-            }
+            SdfNode2d::Union2d(a, b) => a.evaluate(point).min(b.evaluate(point)),
+            SdfNode2d::Difference2d(a, b) => a.evaluate(point).max(-b.evaluate(point)),
+            SdfNode2d::Custom2d(sdf) => sdf.evaluate(point),
         }
     }
 }
@@ -66,39 +64,70 @@ impl SdfNode2d {
 /// `Arc<SdfNode>` so the DAG can be cheaply cloned and shared.
 pub enum SdfNode {
     // -- Primitives (10) ---------------------------------------------------
-
     /// Sphere at `center` with given `radius`.
     Sphere { center: Vector3<f64>, radius: f64 },
 
     /// Axis-aligned box at `center` with `half_extents`.
-    Box3 { center: Vector3<f64>, half_extents: Vector3<f64> },
+    Box3 {
+        center: Vector3<f64>,
+        half_extents: Vector3<f64>,
+    },
 
     /// Capped cylinder with `base` center, unit `axis`, `radius`, and `height`.
-    Cylinder { base: Vector3<f64>, axis: Vector3<f64>, radius: f64, height: f64 },
+    Cylinder {
+        base: Vector3<f64>,
+        axis: Vector3<f64>,
+        radius: f64,
+        height: f64,
+    },
 
     /// Capped cone (truncated cone) from `a` (radius `ra`) to `b` (radius `rb`).
-    CappedCone { a: Vector3<f64>, b: Vector3<f64>, ra: f64, rb: f64 },
+    CappedCone {
+        a: Vector3<f64>,
+        b: Vector3<f64>,
+        ra: f64,
+        rb: f64,
+    },
 
     /// Torus lying in the XZ plane, centered at `center`.
-    Torus { center: Vector3<f64>, major_radius: f64, minor_radius: f64 },
+    Torus {
+        center: Vector3<f64>,
+        major_radius: f64,
+        minor_radius: f64,
+    },
 
     /// Box with rounded edges. Total size is `half_extents + radius`.
-    RoundedBox { center: Vector3<f64>, half_extents: Vector3<f64>, radius: f64 },
+    RoundedBox {
+        center: Vector3<f64>,
+        half_extents: Vector3<f64>,
+        radius: f64,
+    },
 
     /// Capsule (sphere-swept segment) from `a` to `b` with `radius`.
-    Capsule { a: Vector3<f64>, b: Vector3<f64>, radius: f64 },
+    Capsule {
+        a: Vector3<f64>,
+        b: Vector3<f64>,
+        radius: f64,
+    },
 
     /// Ellipsoid with semi-axis lengths `radii`. Approximate SDF.
-    Ellipsoid { center: Vector3<f64>, radii: Vector3<f64> },
+    Ellipsoid {
+        center: Vector3<f64>,
+        radii: Vector3<f64>,
+    },
 
     /// Rounded cylinder aligned along Y axis.
-    RoundedCylinder { center: Vector3<f64>, radius: f64, round_radius: f64, half_height: f64 },
+    RoundedCylinder {
+        center: Vector3<f64>,
+        radius: f64,
+        round_radius: f64,
+        half_height: f64,
+    },
 
     /// Half-space: solid behind the plane `normal . p + d = 0`.
     HalfSpace { normal: Vector3<f64>, d: f64 },
 
     // -- CSG Operations (6) ------------------------------------------------
-
     /// Boolean union (logical OR) — min of children.
     Union(Arc<SdfNode>, Arc<SdfNode>),
 
@@ -118,7 +147,6 @@ pub enum SdfNode {
     SmoothDifference(Arc<SdfNode>, Arc<SdfNode>, f64),
 
     // -- Transforms (6) ----------------------------------------------------
-
     /// Translate by an offset vector.
     Translate(Arc<SdfNode>, Vector3<f64>),
 
@@ -138,7 +166,6 @@ pub enum SdfNode {
     Round(Arc<SdfNode>, f64),
 
     // -- 2D → 3D (2) ------------------------------------------------------
-
     /// Revolve a 2D profile around the Y axis.
     Revolve(Arc<SdfNode2d>),
 
@@ -146,7 +173,6 @@ pub enum SdfNode {
     Extrude(Arc<SdfNode2d>, f64),
 
     // -- Opaque ------------------------------------------------------------
-
     /// Wraps any existing `Sdf` trait object for interop.
     Custom(Arc<dyn crate::shape::Sdf>),
 }
@@ -168,49 +194,52 @@ impl SdfNode {
     pub fn evaluate(&self, point: Vector3<f64>) -> f64 {
         match self {
             // -- Primitives ------------------------------------------------
-
-            SdfNode::Sphere { center, radius } => {
-                primitives::sdf_sphere(point, *center, *radius)
-            }
-            SdfNode::Box3 { center, half_extents } => {
-                primitives::sdf_box(point, *center, *half_extents)
-            }
-            SdfNode::Cylinder { base, axis, radius, height } => {
-                primitives::sdf_cylinder(point, *base, *axis, *radius, *height)
-            }
+            SdfNode::Sphere { center, radius } => primitives::sdf_sphere(point, *center, *radius),
+            SdfNode::Box3 {
+                center,
+                half_extents,
+            } => primitives::sdf_box(point, *center, *half_extents),
+            SdfNode::Cylinder {
+                base,
+                axis,
+                radius,
+                height,
+            } => primitives::sdf_cylinder(point, *base, *axis, *radius, *height),
             SdfNode::CappedCone { a, b, ra, rb } => {
                 primitives::sdf_capped_cone(point, *a, *b, *ra, *rb)
             }
-            SdfNode::Torus { center, major_radius, minor_radius } => {
-                primitives::sdf_torus(point, *center, *major_radius, *minor_radius)
-            }
-            SdfNode::RoundedBox { center, half_extents, radius } => {
-                primitives::sdf_rounded_box(point, *center, *half_extents, *radius)
-            }
-            SdfNode::Capsule { a, b, radius } => {
-                primitives::sdf_capsule(point, *a, *b, *radius)
-            }
+            SdfNode::Torus {
+                center,
+                major_radius,
+                minor_radius,
+            } => primitives::sdf_torus(point, *center, *major_radius, *minor_radius),
+            SdfNode::RoundedBox {
+                center,
+                half_extents,
+                radius,
+            } => primitives::sdf_rounded_box(point, *center, *half_extents, *radius),
+            SdfNode::Capsule { a, b, radius } => primitives::sdf_capsule(point, *a, *b, *radius),
             SdfNode::Ellipsoid { center, radii } => {
                 primitives::sdf_ellipsoid(point, *center, *radii)
             }
-            SdfNode::RoundedCylinder { center, radius, round_radius, half_height } => {
-                primitives::sdf_rounded_cylinder(point, *center, *radius, *round_radius, *half_height)
-            }
-            SdfNode::HalfSpace { normal, d } => {
-                normal.dot(&point) + d
-            }
+            SdfNode::RoundedCylinder {
+                center,
+                radius,
+                round_radius,
+                half_height,
+            } => primitives::sdf_rounded_cylinder(
+                point,
+                *center,
+                *radius,
+                *round_radius,
+                *half_height,
+            ),
+            SdfNode::HalfSpace { normal, d } => normal.dot(&point) + d,
 
             // -- CSG -------------------------------------------------------
-
-            SdfNode::Union(a, b) => {
-                csg::union(a.evaluate(point), b.evaluate(point))
-            }
-            SdfNode::Intersection(a, b) => {
-                csg::intersection(a.evaluate(point), b.evaluate(point))
-            }
-            SdfNode::Difference(a, b) => {
-                csg::difference(a.evaluate(point), b.evaluate(point))
-            }
+            SdfNode::Union(a, b) => csg::union(a.evaluate(point), b.evaluate(point)),
+            SdfNode::Intersection(a, b) => csg::intersection(a.evaluate(point), b.evaluate(point)),
+            SdfNode::Difference(a, b) => csg::difference(a.evaluate(point), b.evaluate(point)),
             SdfNode::SmoothUnion(a, b, k) => {
                 csg::smooth_union(a.evaluate(point), b.evaluate(point), *k)
             }
@@ -222,13 +251,8 @@ impl SdfNode {
             }
 
             // -- Transforms ------------------------------------------------
-
-            SdfNode::Translate(inner, offset) => {
-                inner.evaluate(point - offset)
-            }
-            SdfNode::Rotate(inner, rotation) => {
-                inner.evaluate(rotation.inverse() * point)
-            }
+            SdfNode::Translate(inner, offset) => inner.evaluate(point - offset),
+            SdfNode::Rotate(inner, rotation) => inner.evaluate(rotation.inverse() * point),
             SdfNode::Scale(inner, factor) => {
                 let inv = 1.0 / factor;
                 inner.evaluate(point * inv) * factor
@@ -240,15 +264,10 @@ impl SdfNode {
                 let reflected = point - normal * (2.0 * d.min(0.0));
                 inner.evaluate(reflected)
             }
-            SdfNode::Shell(inner, thickness) => {
-                inner.evaluate(point).abs() - thickness
-            }
-            SdfNode::Round(inner, radius) => {
-                inner.evaluate(point) - radius
-            }
+            SdfNode::Shell(inner, thickness) => inner.evaluate(point).abs() - thickness,
+            SdfNode::Round(inner, radius) => inner.evaluate(point) - radius,
 
             // -- 2D → 3D --------------------------------------------------
-
             SdfNode::Revolve(profile) => {
                 let r = (point.x * point.x + point.z * point.z).sqrt();
                 profile.evaluate(Vector2::new(r, point.y))
@@ -264,10 +283,7 @@ impl SdfNode {
             }
 
             // -- Opaque ----------------------------------------------------
-
-            SdfNode::Custom(sdf) => {
-                sdf.evaluate(point)
-            }
+            SdfNode::Custom(sdf) => sdf.evaluate(point),
         }
     }
 
@@ -280,7 +296,6 @@ impl SdfNode {
     pub fn interval_evaluate(&self, bbox: &BBox3) -> Interval {
         match self {
             // -- Primitives ------------------------------------------------
-
             SdfNode::Sphere { center, radius } => {
                 // Per-axis interval of (p - center)
                 let x_iv = Interval::new(bbox.min.x - center.x, bbox.max.x - center.x);
@@ -292,7 +307,10 @@ impl SdfNode {
                 dist_sq.sqrt().scalar_sub(*radius)
             }
 
-            SdfNode::Box3 { center, half_extents } => {
+            SdfNode::Box3 {
+                center,
+                half_extents,
+            } => {
                 // sdf_box: d_i = |p_i - center_i| - half_i
                 // outside = norm(max(d, 0)), inside = max(d_x, d_y, d_z).min(0)
                 // result = outside + inside
@@ -312,7 +330,8 @@ impl SdfNode {
                 let x_clamped = Interval::new(x_iv.lo.max(0.0), x_iv.hi.max(0.0));
                 let y_clamped = Interval::new(y_iv.lo.max(0.0), y_iv.hi.max(0.0));
                 let z_clamped = Interval::new(z_iv.lo.max(0.0), z_iv.hi.max(0.0));
-                let outside_sq = x_clamped.mul(x_clamped)
+                let outside_sq = x_clamped
+                    .mul(x_clamped)
                     .add(y_clamped.mul(y_clamped))
                     .add(z_clamped.mul(z_clamped));
                 let outside_iv = outside_sq.sqrt();
@@ -340,12 +359,9 @@ impl SdfNode {
             | SdfNode::RoundedBox { .. }
             | SdfNode::Capsule { .. }
             | SdfNode::Ellipsoid { .. }
-            | SdfNode::RoundedCylinder { .. } => {
-                self.interval_from_corners(bbox)
-            }
+            | SdfNode::RoundedCylinder { .. } => self.interval_from_corners(bbox),
 
             // -- CSG -------------------------------------------------------
-
             SdfNode::Union(a, b) => {
                 let a_iv = a.interval_evaluate(bbox);
                 let b_iv = b.interval_evaluate(bbox);
@@ -387,7 +403,6 @@ impl SdfNode {
             }
 
             // -- Transforms ------------------------------------------------
-
             SdfNode::Translate(inner, offset) => {
                 // Shift bbox by -offset, evaluate inner
                 let shifted = BBox3::new(bbox.min - offset, bbox.max - offset);
@@ -398,7 +413,8 @@ impl SdfNode {
                 let inv = rotation.inverse();
                 let corners = bbox.corners();
                 let mut new_min = Vector3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
-                let mut new_max = Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+                let mut new_max =
+                    Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
                 for c in &corners {
                     let rc = inv * c;
                     new_min.x = new_min.x.min(rc.x);
@@ -422,7 +438,8 @@ impl SdfNode {
                 // AABB of all 8 reflected corners.
                 let corners = bbox.corners();
                 let mut new_min = Vector3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
-                let mut new_max = Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+                let mut new_max =
+                    Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
                 for c in &corners {
                     let d = c.dot(normal);
                     let reflected = c - normal * (2.0 * d.min(0.0));
@@ -445,16 +462,10 @@ impl SdfNode {
             }
 
             // -- 2D -> 3D --------------------------------------------------
-
-            SdfNode::Revolve(_) | SdfNode::Extrude(_, _) => {
-                Interval::entire()
-            }
+            SdfNode::Revolve(_) | SdfNode::Extrude(_, _) => Interval::entire(),
 
             // -- Opaque ----------------------------------------------------
-
-            SdfNode::Custom(_) => {
-                Interval::entire()
-            }
+            SdfNode::Custom(_) => Interval::entire(),
         }
     }
 
@@ -466,16 +477,17 @@ impl SdfNode {
     pub fn gradient(&self, point: Vector3<f64>) -> Vector3<f64> {
         match self {
             // -- Primitives ------------------------------------------------
-
             SdfNode::Sphere { center, .. } => {
                 let d = point - center;
                 let len = d.norm();
-                if len > 1e-10 { d / len } else { Vector3::new(0.0, 1.0, 0.0) }
+                if len > 1e-10 {
+                    d / len
+                } else {
+                    Vector3::new(0.0, 1.0, 0.0)
+                }
             }
 
-            SdfNode::HalfSpace { normal, .. } => {
-                *normal
-            }
+            SdfNode::HalfSpace { normal, .. } => *normal,
 
             // Complex primitives: central differences fallback
             SdfNode::Box3 { .. }
@@ -485,12 +497,9 @@ impl SdfNode {
             | SdfNode::RoundedBox { .. }
             | SdfNode::Capsule { .. }
             | SdfNode::Ellipsoid { .. }
-            | SdfNode::RoundedCylinder { .. } => {
-                central_diff_gradient(self, point)
-            }
+            | SdfNode::RoundedCylinder { .. } => central_diff_gradient(self, point),
 
             // -- CSG -------------------------------------------------------
-
             SdfNode::Union(a, b) => {
                 if a.evaluate(point) <= b.evaluate(point) {
                     a.gradient(point)
@@ -518,25 +527,28 @@ impl SdfNode {
             // Smooth CSG: central differences (blending makes analytical complex)
             SdfNode::SmoothUnion(_, _, _)
             | SdfNode::SmoothIntersection(_, _, _)
-            | SdfNode::SmoothDifference(_, _, _) => {
-                central_diff_gradient(self, point)
-            }
+            | SdfNode::SmoothDifference(_, _, _) => central_diff_gradient(self, point),
 
             // -- Transforms ------------------------------------------------
-
-            SdfNode::Translate(inner, offset) => {
-                inner.gradient(point - offset)
-            }
+            SdfNode::Translate(inner, offset) => inner.gradient(point - offset),
             SdfNode::Rotate(inner, rotation) => {
                 let local_grad = inner.gradient(rotation.inverse() * point);
                 let g = rotation * local_grad;
                 let len = g.norm();
-                if len > 1e-10 { g / len } else { Vector3::new(0.0, 1.0, 0.0) }
+                if len > 1e-10 {
+                    g / len
+                } else {
+                    Vector3::new(0.0, 1.0, 0.0)
+                }
             }
             SdfNode::Scale(inner, factor) => {
                 let g = inner.gradient(point / *factor);
                 let len = g.norm();
-                if len > 1e-10 { g / len } else { Vector3::new(0.0, 1.0, 0.0) }
+                if len > 1e-10 {
+                    g / len
+                } else {
+                    Vector3::new(0.0, 1.0, 0.0)
+                }
             }
             SdfNode::Mirror(inner, normal) => {
                 let d = point.dot(normal);
@@ -546,7 +558,11 @@ impl SdfNode {
                     // Reflect gradient back through the mirror plane
                     let g_ref = g - normal * (2.0 * g.dot(normal));
                     let len = g_ref.norm();
-                    if len > 1e-10 { g_ref / len } else { Vector3::new(0.0, 1.0, 0.0) }
+                    if len > 1e-10 {
+                        g_ref / len
+                    } else {
+                        Vector3::new(0.0, 1.0, 0.0)
+                    }
                 } else {
                     g
                 }
@@ -558,21 +574,13 @@ impl SdfNode {
                     -inner.gradient(point)
                 }
             }
-            SdfNode::Round(inner, _radius) => {
-                inner.gradient(point)
-            }
+            SdfNode::Round(inner, _radius) => inner.gradient(point),
 
             // -- 2D -> 3D --------------------------------------------------
-
-            SdfNode::Revolve(_) | SdfNode::Extrude(_, _) => {
-                central_diff_gradient(self, point)
-            }
+            SdfNode::Revolve(_) | SdfNode::Extrude(_, _) => central_diff_gradient(self, point),
 
             // -- Opaque ----------------------------------------------------
-
-            SdfNode::Custom(_) => {
-                central_diff_gradient(self, point)
-            }
+            SdfNode::Custom(_) => central_diff_gradient(self, point),
         }
     }
 
@@ -606,12 +614,16 @@ impl SdfNode {
 fn central_diff_gradient(node: &SdfNode, point: Vector3<f64>) -> Vector3<f64> {
     let eps = 1e-6;
     let dx = node.evaluate(point + Vector3::new(eps, 0.0, 0.0))
-           - node.evaluate(point - Vector3::new(eps, 0.0, 0.0));
+        - node.evaluate(point - Vector3::new(eps, 0.0, 0.0));
     let dy = node.evaluate(point + Vector3::new(0.0, eps, 0.0))
-           - node.evaluate(point - Vector3::new(0.0, eps, 0.0));
+        - node.evaluate(point - Vector3::new(0.0, eps, 0.0));
     let dz = node.evaluate(point + Vector3::new(0.0, 0.0, eps))
-           - node.evaluate(point - Vector3::new(0.0, 0.0, eps));
+        - node.evaluate(point - Vector3::new(0.0, 0.0, eps));
     let g = Vector3::new(dx, dy, dz);
     let len = g.norm();
-    if len > 1e-10 { g / len } else { Vector3::new(0.0, 1.0, 0.0) }
+    if len > 1e-10 {
+        g / len
+    } else {
+        Vector3::new(0.0, 1.0, 0.0)
+    }
 }

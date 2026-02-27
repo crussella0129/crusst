@@ -34,10 +34,11 @@ impl VoxelGrid {
 
     /// Return the world-space center of the voxel at grid indices `(ix, iy, iz)`.
     pub fn world_at(&self, ix: usize, iy: usize, iz: usize) -> Vector3<f64> {
-        self.origin + Vector3::new(
-            (ix as f64 + 0.5) * self.voxel_size,
-            (iy as f64 + 0.5) * self.voxel_size,
-            (iz as f64 + 0.5) * self.voxel_size,
-        )
+        self.origin
+            + Vector3::new(
+                (ix as f64 + 0.5) * self.voxel_size,
+                (iy as f64 + 0.5) * self.voxel_size,
+                (iz as f64 + 0.5) * self.voxel_size,
+            )
     }
 }

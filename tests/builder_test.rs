@@ -10,8 +10,7 @@ fn builder_sphere_evaluates() {
 
 #[test]
 fn builder_chain_union() {
-    let s = Shape::sphere(5.0)
-        .union(Shape::sphere(5.0).translate(10.0, 0.0, 0.0));
+    let s = Shape::sphere(5.0).union(Shape::sphere(5.0).translate(10.0, 0.0, 0.0));
     assert!(s.contains(Vector3::zeros()));
     assert!(s.contains(Vector3::new(10.0, 0.0, 0.0)));
     assert!(!s.contains(Vector3::new(100.0, 0.0, 0.0)));
@@ -19,8 +18,7 @@ fn builder_chain_union() {
 
 #[test]
 fn builder_subtract() {
-    let s = Shape::box3(10.0, 10.0, 10.0)
-        .subtract(Shape::sphere(7.0));
+    let s = Shape::box3(10.0, 10.0, 10.0).subtract(Shape::sphere(7.0));
     assert!(!s.contains(Vector3::zeros()));
     assert!(s.contains(Vector3::new(9.0, 9.0, 0.0)));
 }
@@ -28,7 +26,11 @@ fn builder_subtract() {
 #[test]
 fn builder_mesh_produces_triangles() {
     let s = Shape::sphere(5.0);
-    let mesh = s.mesh(MeshSettings { max_depth: 5, min_depth: 3, edge_tolerance: 1e-6 });
+    let mesh = s.mesh(MeshSettings {
+        max_depth: 5,
+        min_depth: 3,
+        edge_tolerance: 1e-6,
+    });
     assert!(mesh.indices.len() > 30);
 }
 

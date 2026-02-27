@@ -1,7 +1,7 @@
-use nalgebra::Vector3;
-use crusst::shape::Sphere;
-use crusst::mesh::extract_mesh;
 use crusst::export::write_stl;
+use crusst::mesh::extract_mesh;
+use crusst::shape::Sphere;
+use nalgebra::Vector3;
 use std::path::PathBuf;
 
 #[test]

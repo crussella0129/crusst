@@ -1,6 +1,6 @@
-use nalgebra::Vector3;
-use crate::shape::Sdf;
 use crate::path::Path;
+use crate::shape::Sdf;
+use nalgebra::Vector3;
 
 /// Polynomial smooth minimum. Blends two SDF values smoothly within
 /// radius `k`, making the combined gradient C1 continuous. At most shifts
@@ -98,11 +98,7 @@ pub fn order1<P: Path + 'static>(
 /// Order 2: Frame transport.
 /// Circle of `section_radius` swept along path with Frenet frame following curvature.
 /// The section is rigid — only the frame rotates.
-pub fn order2<P: Path + 'static>(
-    path: P,
-    section_radius: f64,
-    samples: usize,
-) -> TransportShape {
+pub fn order2<P: Path + 'static>(path: P, section_radius: f64, samples: usize) -> TransportShape {
     order1(path, section_radius, |_| 1.0, samples)
 }
 

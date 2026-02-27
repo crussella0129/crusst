@@ -41,7 +41,12 @@ fn primitive_sphere() {
     // Outside should be positive
     assert!(shape.evaluate(Vector3::new(15.0, 0.0, 0.0)) > 0.0);
 
-    let mesh = extract_mesh(&shape, Vector3::from_element(-12.0), Vector3::from_element(12.0), 64);
+    let mesh = extract_mesh(
+        &shape,
+        Vector3::from_element(-12.0),
+        Vector3::from_element(12.0),
+        64,
+    );
     assert!(mesh.indices.len() / 3 > 100);
     export_both(&mesh, "01_sphere");
 }
@@ -181,10 +186,7 @@ fn primitive_capsule() {
 
 #[test]
 fn primitive_ellipsoid() {
-    let shape = Ellipsoid::new(
-        Vector3::zeros(),
-        Vector3::new(10.0, 5.0, 3.0),
-    );
+    let shape = Ellipsoid::new(Vector3::zeros(), Vector3::new(10.0, 5.0, 3.0));
     // Center inside
     assert!(shape.evaluate(Vector3::zeros()) < 0.0);
     // Outside on long axis
@@ -396,7 +398,10 @@ fn transform_rotate() {
     // A box rotated 45 degrees around Y axis
     let shape = Rotate::new(
         Box3::new(Vector3::zeros(), Vector3::new(10.0, 5.0, 2.0)),
-        Rotation3::from_axis_angle(&Unit::new_normalize(Vector3::y_axis().into_inner()), PI / 4.0),
+        Rotation3::from_axis_angle(
+            &Unit::new_normalize(Vector3::y_axis().into_inner()),
+            PI / 4.0,
+        ),
     );
     // Center still inside
     assert!(shape.evaluate(Vector3::zeros()) < 0.0);
@@ -617,11 +622,7 @@ fn composed_gasket_ring() {
 fn composed_rounded_enclosure() {
     // Electronics enclosure: rounded box with interior cavity and cable port
 
-    let outer = RoundedBox::new(
-        Vector3::zeros(),
-        Vector3::new(15.0, 8.0, 10.0),
-        2.0,
-    );
+    let outer = RoundedBox::new(Vector3::zeros(), Vector3::new(15.0, 8.0, 10.0), 2.0);
     // Interior cavity (slightly smaller)
     let cavity = Box3::new(
         Vector3::new(0.0, 1.0, 0.0), // offset up to leave floor
@@ -692,7 +693,10 @@ fn composed_rotated_multi_body() {
     );
     let box3 = Rotate::new(
         Box3::new(Vector3::zeros(), Vector3::new(8.0, 2.0, 2.0)),
-        Rotation3::from_axis_angle(&Unit::new_normalize(Vector3::new(0.0, 0.0, 1.0)), 2.0 * PI / 3.0),
+        Rotation3::from_axis_angle(
+            &Unit::new_normalize(Vector3::new(0.0, 0.0, 1.0)),
+            2.0 * PI / 3.0,
+        ),
     );
 
     let star = Union::new(Union::new(box1, box2), box3);
@@ -777,7 +781,9 @@ fn accuracy_sphere_distance() {
         assert!(
             (actual - expected).abs() < 1e-10,
             "Sphere distance mismatch at {:?}: expected {}, got {}",
-            point, expected, actual
+            point,
+            expected,
+            actual
         );
     }
 }
@@ -792,7 +798,11 @@ fn accuracy_torus_on_surface() {
         // Point on outer surface: major_radius + minor_radius
         let point = Vector3::new(13.0 * theta.cos(), 0.0, 13.0 * theta.sin());
         let d = shape.evaluate(point);
-        assert!(d.abs() < 0.1, "Torus surface point should be near zero, got {}", d);
+        assert!(
+            d.abs() < 0.1,
+            "Torus surface point should be near zero, got {}",
+            d
+        );
     }
 }
 
@@ -822,9 +832,11 @@ fn accuracy_boolean_containment() {
                 let u_inside = du < 0.0;
 
                 if a_inside || b_inside {
-                    assert!(u_inside,
+                    assert!(
+                        u_inside,
                         "Union should be inside at {:?} (a={}, b={}, u={})",
-                        p, da, db, du);
+                        p, da, db, du
+                    );
                 }
                 // Note: the converse isn't exactly true due to SDF approximation
                 // near the surface, so we only test one direction with a margin
@@ -842,7 +854,12 @@ fn mesh_quality_manifold_check() {
     // Verify basic mesh topology: every edge should appear in exactly 2 triangles
     // for a watertight mesh (best-effort with marching cubes)
     let shape = Sphere::new(Vector3::zeros(), 8.0);
-    let mesh = extract_mesh(&shape, Vector3::from_element(-10.0), Vector3::from_element(10.0), 32);
+    let mesh = extract_mesh(
+        &shape,
+        Vector3::from_element(-10.0),
+        Vector3::from_element(10.0),
+        32,
+    );
 
     // Count edge usage
     let mut edge_counts: HashMap<(u32, u32), u32> = HashMap::new();
@@ -885,7 +902,8 @@ fn mesh_quality_normal_consistency() {
         assert!(
             (len - 1.0).abs() < 0.01,
             "Normal {} has non-unit length: {}",
-            i, len
+            i,
+            len
         );
     }
 }
@@ -919,6 +937,8 @@ fn mesh_quality_triangle_area() {
     assert!(
         degenerate_pct < 5.0,
         "{}% degenerate triangles ({}/{})",
-        degenerate_pct, degenerate_count, total
+        degenerate_pct,
+        degenerate_count,
+        total
     );
 }

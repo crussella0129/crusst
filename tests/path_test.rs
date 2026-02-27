@@ -1,6 +1,6 @@
 use approx::assert_relative_eq;
+use crusst::path::{HelixPath, LinePath, Path, SpiralPath};
 use nalgebra::Vector3;
-use crusst::path::{Path, LinePath, HelixPath, SpiralPath};
 
 #[test]
 fn line_path_endpoints() {
@@ -48,8 +48,8 @@ fn helix_path_rises_linearly() {
 #[test]
 fn spiral_path_radius_decreases() {
     let spiral = SpiralPath::new(
-        |t| 20.0 * (1.0 - t),  // radius decreases from 20 to 0
-        |t| 50.0 * t,          // height increases from 0 to 50
+        |t| 20.0 * (1.0 - t), // radius decreases from 20 to 0
+        |t| 50.0 * t,         // height increases from 0 to 50
         3.0,
     );
     let start = spiral.point(0.0);

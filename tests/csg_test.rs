@@ -1,19 +1,27 @@
 use approx::assert_relative_eq;
-use nalgebra::Vector3;
+use crusst::csg::{difference, intersection, smooth_union, union};
 use crusst::primitives::sdf_sphere;
-use crusst::csg::{union, intersection, difference, smooth_union};
+use nalgebra::Vector3;
 
 #[test]
 fn union_takes_minimum() {
     let a = sdf_sphere(Vector3::new(2.0, 0.0, 0.0), Vector3::zeros(), 1.0);
-    let b = sdf_sphere(Vector3::new(2.0, 0.0, 0.0), Vector3::new(5.0, 0.0, 0.0), 1.0);
+    let b = sdf_sphere(
+        Vector3::new(2.0, 0.0, 0.0),
+        Vector3::new(5.0, 0.0, 0.0),
+        1.0,
+    );
     assert_relative_eq!(union(a, b), 1.0, epsilon = 1e-6);
 }
 
 #[test]
 fn intersection_takes_maximum() {
     let a = sdf_sphere(Vector3::new(0.5, 0.0, 0.0), Vector3::zeros(), 1.0);
-    let b = sdf_sphere(Vector3::new(0.5, 0.0, 0.0), Vector3::new(1.0, 0.0, 0.0), 1.0);
+    let b = sdf_sphere(
+        Vector3::new(0.5, 0.0, 0.0),
+        Vector3::new(1.0, 0.0, 0.0),
+        1.0,
+    );
     assert_relative_eq!(intersection(a, b), -0.5, epsilon = 1e-6);
 }
 

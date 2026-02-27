@@ -1,5 +1,5 @@
-use nalgebra::{Matrix3, Vector3};
 use crate::types::BBox3;
+use nalgebra::{Matrix3, Vector3};
 
 /// Solve the Quadratic Error Function: find the point v that minimizes
 /// Σ (nᵢ · (v - pᵢ))²

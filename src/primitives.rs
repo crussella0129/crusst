@@ -105,12 +105,7 @@ pub fn sdf_rounded_box(
 /// Signed distance to a capsule (sphere-swept line segment).
 /// `a` and `b` are the endpoints, `radius` is the swept sphere radius.
 /// Exact signed distance.
-pub fn sdf_capsule(
-    point: Vector3<f64>,
-    a: Vector3<f64>,
-    b: Vector3<f64>,
-    radius: f64,
-) -> f64 {
+pub fn sdf_capsule(point: Vector3<f64>, a: Vector3<f64>, b: Vector3<f64>, radius: f64) -> f64 {
     let pa = point - a;
     let ba = b - a;
     let h = (pa.dot(&ba) / ba.dot(&ba)).clamp(0.0, 1.0);
@@ -120,11 +115,7 @@ pub fn sdf_capsule(
 /// Signed distance to an ellipsoid centered at `center` with semi-axis lengths `radii`.
 /// This is an approximation — the true ellipsoid SDF has no closed-form solution.
 /// Uses the bound-corrected approximation from Quilez.
-pub fn sdf_ellipsoid(
-    point: Vector3<f64>,
-    center: Vector3<f64>,
-    radii: Vector3<f64>,
-) -> f64 {
+pub fn sdf_ellipsoid(point: Vector3<f64>, center: Vector3<f64>, radii: Vector3<f64>) -> f64 {
     let p = point - center;
     // Normalize by radii
     let k0 = Vector3::new(p.x / radii.x, p.y / radii.y, p.z / radii.z).norm();

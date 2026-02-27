@@ -103,7 +103,11 @@ pub fn write_step(mesh: &TriangleMesh, path: &Path) -> std::io::Result<()> {
     write_step_header(&mut file, path)?;
 
     let mut id: u64 = 1;
-    let mut next_id = || { let current = id; id += 1; current };
+    let mut next_id = || {
+        let current = id;
+        id += 1;
+        current
+    };
 
     // Deduplicate vertices and build entity IDs
     let mut point_ids: Vec<u64> = Vec::with_capacity(mesh.vertices.len());
@@ -112,7 +116,11 @@ pub fn write_step(mesh: &TriangleMesh, path: &Path) -> std::io::Result<()> {
     // Write CARTESIAN_POINTs and VERTEX_POINTs
     for v in &mesh.vertices {
         let pid = next_id();
-        writeln!(file, "#{}=CARTESIAN_POINT('',({}E0,{}E0,{}E0));", pid, v.x, v.y, v.z)?;
+        writeln!(
+            file,
+            "#{}=CARTESIAN_POINT('',({}E0,{}E0,{}E0));",
+            pid, v.x, v.y, v.z
+        )?;
         point_ids.push(pid);
 
         let vid = next_id();
@@ -134,19 +142,27 @@ pub fn write_step(mesh: &TriangleMesh, path: &Path) -> std::io::Result<()> {
         let (ai, bi, ci) = (chunk[0] as usize, chunk[1] as usize, chunk[2] as usize);
         for &(v0, v1) in &[(ai, bi), (bi, ci), (ci, ai)] {
             let key = if v0 < v1 { (v0, v1) } else { (v1, v0) };
-            if edge_map.contains_key(&key) { continue; }
+            if edge_map.contains_key(&key) {
+                continue;
+            }
 
             let va = &mesh.vertices[key.0];
             let vb = &mesh.vertices[key.1];
             let dx = vb.x - va.x;
             let dy = vb.y - va.y;
             let dz = vb.z - va.z;
-            let len = (dx*dx + dy*dy + dz*dz).sqrt();
+            let len = (dx * dx + dy * dy + dz * dz).sqrt();
 
             let line_dir_id = next_id();
             if len > 1e-12 {
-                writeln!(file, "#{}=DIRECTION('',({:.15E},{:.15E},{:.15E}));",
-                    line_dir_id, dx/len, dy/len, dz/len)?;
+                writeln!(
+                    file,
+                    "#{}=DIRECTION('',({:.15E},{:.15E},{:.15E}));",
+                    line_dir_id,
+                    dx / len,
+                    dy / len,
+                    dz / len
+                )?;
             } else {
                 writeln!(file, "#{}=DIRECTION('',(1.E0,0.E0,0.E0));", line_dir_id)?;
             }
@@ -155,12 +171,18 @@ pub fn write_step(mesh: &TriangleMesh, path: &Path) -> std::io::Result<()> {
             writeln!(file, "#{}=VECTOR('',#{},1.E0);", vec_id, line_dir_id)?;
 
             let line_id = next_id();
-            writeln!(file, "#{}=LINE('',#{},#{});",
-                line_id, point_ids[key.0], vec_id)?;
+            writeln!(
+                file,
+                "#{}=LINE('',#{},#{});",
+                line_id, point_ids[key.0], vec_id
+            )?;
 
             let edge_id = next_id();
-            writeln!(file, "#{}=EDGE_CURVE('',#{},#{},#{},.T.);",
-                edge_id, vertex_ids[key.0], vertex_ids[key.1], line_id)?;
+            writeln!(
+                file,
+                "#{}=EDGE_CURVE('',#{},#{},#{},.T.);",
+                edge_id, vertex_ids[key.0], vertex_ids[key.1], line_id
+            )?;
             edge_map.insert(key, edge_id);
         }
     }
@@ -185,14 +207,21 @@ pub fn write_step(mesh: &TriangleMesh, path: &Path) -> std::io::Result<()> {
         for (eid, same_dir) in &edge_entity_ids {
             let oe_id = next_id();
             let orient = if *same_dir { ".T." } else { ".F." };
-            writeln!(file, "#{}=ORIENTED_EDGE('',*,*,#{},{});", oe_id, eid, orient)?;
+            writeln!(
+                file,
+                "#{}=ORIENTED_EDGE('',*,*,#{},{});",
+                oe_id, eid, orient
+            )?;
             oe_ids.push(oe_id);
         }
 
         // EDGE_LOOP
         let el_id = next_id();
-        writeln!(file, "#{}=EDGE_LOOP('',(#{},#{},#{}));",
-            el_id, oe_ids[0], oe_ids[1], oe_ids[2])?;
+        writeln!(
+            file,
+            "#{}=EDGE_LOOP('',(#{},#{},#{}));",
+            el_id, oe_ids[0], oe_ids[1], oe_ids[2]
+        )?;
 
         // FACE_BOUND
         let fb_id = next_id();
@@ -202,51 +231,75 @@ pub fn write_step(mesh: &TriangleMesh, path: &Path) -> std::io::Result<()> {
         let va = &mesh.vertices[ai];
         let vb = &mesh.vertices[bi];
         let vc = &mesh.vertices[ci];
-        let e1x = vb.x - va.x; let e1y = vb.y - va.y; let e1z = vb.z - va.z;
-        let e2x = vc.x - va.x; let e2y = vc.y - va.y; let e2z = vc.z - va.z;
+        let e1x = vb.x - va.x;
+        let e1y = vb.y - va.y;
+        let e1z = vb.z - va.z;
+        let e2x = vc.x - va.x;
+        let e2y = vc.y - va.y;
+        let e2z = vc.z - va.z;
         let nx = e1y * e2z - e1z * e2y;
         let ny = e1z * e2x - e1x * e2z;
         let nz = e1x * e2y - e1y * e2x;
-        let nlen = (nx*nx + ny*ny + nz*nz).sqrt();
+        let nlen = (nx * nx + ny * ny + nz * nz).sqrt();
         let (fnx, fny, fnz) = if nlen > 1e-12 {
-            (nx/nlen, ny/nlen, nz/nlen)
+            (nx / nlen, ny / nlen, nz / nlen)
         } else {
             (0.0, 0.0, 1.0)
         };
 
         let fn_dir_id = next_id();
-        writeln!(file, "#{}=DIRECTION('',({:.15E},{:.15E},{:.15E}));",
-            fn_dir_id, fnx, fny, fnz)?;
+        writeln!(
+            file,
+            "#{}=DIRECTION('',({:.15E},{:.15E},{:.15E}));",
+            fn_dir_id, fnx, fny, fnz
+        )?;
 
         // Ref direction (pick one perpendicular to normal)
         let (rx, ry, rz) = if fnx.abs() < 0.9 {
             let cx = 0.0 - fnz * 0.0 + fny * 0.0;
             let cy = fnz * 1.0 - fnx * 0.0;
             let cz = fnx * 0.0 - fny * 1.0;
-            let clen = (cx*cx + cy*cy + cz*cz).sqrt();
-            if clen > 1e-12 { (cy/clen, cz/clen, cx/clen) } else { (0.0, 1.0, 0.0) }
+            let clen = (cx * cx + cy * cy + cz * cz).sqrt();
+            if clen > 1e-12 {
+                (cy / clen, cz / clen, cx / clen)
+            } else {
+                (0.0, 1.0, 0.0)
+            }
         } else {
             let cx = fny * 1.0 - fnz * 0.0;
             let cy = fnz * 0.0 - fnx * 1.0;
             let cz = fnx * 0.0 - fny * 0.0;
-            let clen = (cx*cx + cy*cy + cz*cz).sqrt();
-            if clen > 1e-12 { (cx/clen, cy/clen, cz/clen) } else { (1.0, 0.0, 0.0) }
+            let clen = (cx * cx + cy * cy + cz * cz).sqrt();
+            if clen > 1e-12 {
+                (cx / clen, cy / clen, cz / clen)
+            } else {
+                (1.0, 0.0, 0.0)
+            }
         };
 
         let ref_dir_id = next_id();
-        writeln!(file, "#{}=DIRECTION('',({:.15E},{:.15E},{:.15E}));",
-            ref_dir_id, rx, ry, rz)?;
+        writeln!(
+            file,
+            "#{}=DIRECTION('',({:.15E},{:.15E},{:.15E}));",
+            ref_dir_id, rx, ry, rz
+        )?;
 
         let axis_id = next_id();
-        writeln!(file, "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
-            axis_id, point_ids[ai], fn_dir_id, ref_dir_id)?;
+        writeln!(
+            file,
+            "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
+            axis_id, point_ids[ai], fn_dir_id, ref_dir_id
+        )?;
 
         let plane_id = next_id();
         writeln!(file, "#{}=PLANE('',#{});", plane_id, axis_id)?;
 
         let face_id = next_id();
-        writeln!(file, "#{}=ADVANCED_FACE('',(#{}),#{},.T.);",
-            face_id, fb_id, plane_id)?;
+        writeln!(
+            file,
+            "#{}=ADVANCED_FACE('',(#{}),#{},.T.);",
+            face_id, fb_id, plane_id
+        )?;
 
         face_ids.push(face_id);
     }
@@ -255,14 +308,20 @@ pub fn write_step(mesh: &TriangleMesh, path: &Path) -> std::io::Result<()> {
     let shell_id = next_id();
     write!(file, "#{}=CLOSED_SHELL('Crusst_Shell',(", shell_id)?;
     for (i, fid) in face_ids.iter().enumerate() {
-        if i > 0 { write!(file, ",")?; }
+        if i > 0 {
+            write!(file, ",")?;
+        }
         write!(file, "#{}", fid)?;
     }
     writeln!(file, "));")?;
 
     // MANIFOLD_SOLID_BREP
     let brep_id = next_id();
-    writeln!(file, "#{}=MANIFOLD_SOLID_BREP('Crusst_Body',#{});", brep_id, shell_id)?;
+    writeln!(
+        file,
+        "#{}=MANIFOLD_SOLID_BREP('Crusst_Body',#{});",
+        brep_id, shell_id
+    )?;
 
     write_step_footer(&mut file, &mut next_id, dir_z_id, dir_x_id, brep_id)?;
 
@@ -282,12 +341,22 @@ fn write_step_exact(node: &SdfNode, path: &Path) -> std::io::Result<()> {
         SdfNode::Sphere { center, radius } => {
             write_step_sphere(path, *center + offset, *radius * scale)
         }
-        SdfNode::Box3 { center, half_extents } => {
-            write_step_box(path, *center + offset, *half_extents * scale)
-        }
-        SdfNode::Cylinder { base, axis, radius, height } => {
-            write_step_cylinder(path, *base + offset, *axis, *radius * scale, *height * scale)
-        }
+        SdfNode::Box3 {
+            center,
+            half_extents,
+        } => write_step_box(path, *center + offset, *half_extents * scale),
+        SdfNode::Cylinder {
+            base,
+            axis,
+            radius,
+            height,
+        } => write_step_cylinder(
+            path,
+            *base + offset,
+            *axis,
+            *radius * scale,
+            *height * scale,
+        ),
         _ => {
             // Should not happen since classify() returned Exact, but be defensive.
             write_step_tessellated_from_node(node, path)
@@ -328,12 +397,19 @@ fn write_step_sphere(path: &Path, center: Vector3<f64>, radius: f64) -> std::io:
     write_step_header(&mut file, path)?;
 
     let mut id: u64 = 1;
-    let mut next_id = || { let current = id; id += 1; current };
+    let mut next_id = || {
+        let current = id;
+        id += 1;
+        current
+    };
 
     // Center point
     let center_pt = next_id();
-    writeln!(file, "#{}=CARTESIAN_POINT('Center',({:.15E},{:.15E},{:.15E}));",
-        center_pt, center.x, center.y, center.z)?;
+    writeln!(
+        file,
+        "#{}=CARTESIAN_POINT('Center',({:.15E},{:.15E},{:.15E}));",
+        center_pt, center.x, center.y, center.z
+    )?;
 
     // Axis direction (Z up)
     let dir_z = next_id();
@@ -345,13 +421,19 @@ fn write_step_sphere(path: &Path, center: Vector3<f64>, radius: f64) -> std::io:
 
     // AXIS2_PLACEMENT_3D for the sphere
     let axis_placement = next_id();
-    writeln!(file, "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
-        axis_placement, center_pt, dir_z, dir_x)?;
+    writeln!(
+        file,
+        "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
+        axis_placement, center_pt, dir_z, dir_x
+    )?;
 
     // SPHERICAL_SURFACE
     let sphere_surf = next_id();
-    writeln!(file, "#{}=SPHERICAL_SURFACE('',#{},{:.15E});",
-        sphere_surf, axis_placement, radius)?;
+    writeln!(
+        file,
+        "#{}=SPHERICAL_SURFACE('',#{},{:.15E});",
+        sphere_surf, axis_placement, radius
+    )?;
 
     // For a complete sphere we need a single ADVANCED_FACE with the spherical
     // surface. We define a minimal topology: a VERTEX_POINT at the north pole,
@@ -359,39 +441,73 @@ fn write_step_sphere(path: &Path, center: Vector3<f64>, radius: f64) -> std::io:
 
     // North pole vertex
     let north_pt = next_id();
-    writeln!(file, "#{}=CARTESIAN_POINT('NorthPole',({:.15E},{:.15E},{:.15E}));",
-        north_pt, center.x, center.y, center.z + radius)?;
+    writeln!(
+        file,
+        "#{}=CARTESIAN_POINT('NorthPole',({:.15E},{:.15E},{:.15E}));",
+        north_pt,
+        center.x,
+        center.y,
+        center.z + radius
+    )?;
     let north_vp = next_id();
     writeln!(file, "#{}=VERTEX_POINT('',#{});", north_vp, north_pt)?;
 
     // South pole vertex
     let south_pt = next_id();
-    writeln!(file, "#{}=CARTESIAN_POINT('SouthPole',({:.15E},{:.15E},{:.15E}));",
-        south_pt, center.x, center.y, center.z - radius)?;
+    writeln!(
+        file,
+        "#{}=CARTESIAN_POINT('SouthPole',({:.15E},{:.15E},{:.15E}));",
+        south_pt,
+        center.x,
+        center.y,
+        center.z - radius
+    )?;
     let south_vp = next_id();
     writeln!(file, "#{}=VERTEX_POINT('',#{});", south_vp, south_pt)?;
 
     // Seam edge (half circle from north to south pole along the prime meridian)
     // We need a CIRCLE curve for the edge
     let seam_circle_axis = next_id();
-    writeln!(file, "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
-        seam_circle_axis, center_pt, dir_x, dir_z)?;
+    writeln!(
+        file,
+        "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
+        seam_circle_axis, center_pt, dir_x, dir_z
+    )?;
     let seam_circle = next_id();
-    writeln!(file, "#{}=CIRCLE('',#{},{:.15E});", seam_circle, seam_circle_axis, radius)?;
+    writeln!(
+        file,
+        "#{}=CIRCLE('',#{},{:.15E});",
+        seam_circle, seam_circle_axis, radius
+    )?;
 
     let seam_edge = next_id();
-    writeln!(file, "#{}=EDGE_CURVE('',#{},#{},#{},.T.);",
-        seam_edge, north_vp, south_vp, seam_circle)?;
+    writeln!(
+        file,
+        "#{}=EDGE_CURVE('',#{},#{},#{},.T.);",
+        seam_edge, north_vp, south_vp, seam_circle
+    )?;
 
     // Two oriented edges (forward and reverse) to form a closed loop
     let oe_fwd = next_id();
-    writeln!(file, "#{}=ORIENTED_EDGE('',*,*,#{},.T.);", oe_fwd, seam_edge)?;
+    writeln!(
+        file,
+        "#{}=ORIENTED_EDGE('',*,*,#{},.T.);",
+        oe_fwd, seam_edge
+    )?;
     let oe_rev = next_id();
-    writeln!(file, "#{}=ORIENTED_EDGE('',*,*,#{},.F.);", oe_rev, seam_edge)?;
+    writeln!(
+        file,
+        "#{}=ORIENTED_EDGE('',*,*,#{},.F.);",
+        oe_rev, seam_edge
+    )?;
 
     // EDGE_LOOP
     let edge_loop = next_id();
-    writeln!(file, "#{}=EDGE_LOOP('',(#{},#{}));", edge_loop, oe_fwd, oe_rev)?;
+    writeln!(
+        file,
+        "#{}=EDGE_LOOP('',(#{},#{}));",
+        edge_loop, oe_fwd, oe_rev
+    )?;
 
     // FACE_BOUND
     let face_bound = next_id();
@@ -399,16 +515,27 @@ fn write_step_sphere(path: &Path, center: Vector3<f64>, radius: f64) -> std::io:
 
     // ADVANCED_FACE with spherical surface
     let face_id = next_id();
-    writeln!(file, "#{}=ADVANCED_FACE('',(#{}),#{},.T.);",
-        face_id, face_bound, sphere_surf)?;
+    writeln!(
+        file,
+        "#{}=ADVANCED_FACE('',(#{}),#{},.T.);",
+        face_id, face_bound, sphere_surf
+    )?;
 
     // CLOSED_SHELL
     let shell_id = next_id();
-    writeln!(file, "#{}=CLOSED_SHELL('Sphere_Shell',(#{}));", shell_id, face_id)?;
+    writeln!(
+        file,
+        "#{}=CLOSED_SHELL('Sphere_Shell',(#{}));",
+        shell_id, face_id
+    )?;
 
     // MANIFOLD_SOLID_BREP
     let brep_id = next_id();
-    writeln!(file, "#{}=MANIFOLD_SOLID_BREP('Sphere_Body',#{});", brep_id, shell_id)?;
+    writeln!(
+        file,
+        "#{}=MANIFOLD_SOLID_BREP('Sphere_Body',#{});",
+        brep_id, shell_id
+    )?;
 
     write_step_footer(&mut file, &mut next_id, dir_z, dir_x, brep_id)?;
 
@@ -428,7 +555,11 @@ fn write_step_box(
     write_step_header(&mut file, path)?;
 
     let mut id: u64 = 1;
-    let mut next_id = || { let current = id; id += 1; current };
+    let mut next_id = || {
+        let current = id;
+        id += 1;
+        current
+    };
 
     let hx = half_extents.x;
     let hy = half_extents.y;
@@ -454,8 +585,11 @@ fn write_step_box(
     let mut vp_ids = [0u64; 8];
     for (i, c) in corners.iter().enumerate() {
         let pid = next_id();
-        writeln!(file, "#{}=CARTESIAN_POINT('V{}',({:.15E},{:.15E},{:.15E}));",
-            pid, i, c.x, c.y, c.z)?;
+        writeln!(
+            file,
+            "#{}=CARTESIAN_POINT('V{}',({:.15E},{:.15E},{:.15E}));",
+            pid, i, c.x, c.y, c.z
+        )?;
         pt_ids[i] = pid;
 
         let vid = next_id();
@@ -465,9 +599,18 @@ fn write_step_box(
 
     // 12 edges of the box. Each edge is (start_vertex_idx, end_vertex_idx).
     let edge_defs: [(usize, usize); 12] = [
-        (0, 1), (1, 2), (2, 3), (3, 0), // bottom face edges
-        (4, 5), (5, 6), (6, 7), (7, 4), // top face edges
-        (0, 4), (1, 5), (2, 6), (3, 7), // vertical edges
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (3, 0), // bottom face edges
+        (4, 5),
+        (5, 6),
+        (6, 7),
+        (7, 4), // top face edges
+        (0, 4),
+        (1, 5),
+        (2, 6),
+        (3, 7), // vertical edges
     ];
 
     let mut edge_ids = [0u64; 12];
@@ -478,11 +621,17 @@ fn write_step_box(
         let dx = vb.x - va.x;
         let dy = vb.y - va.y;
         let dz = vb.z - va.z;
-        let len = (dx*dx + dy*dy + dz*dz).sqrt();
+        let len = (dx * dx + dy * dy + dz * dz).sqrt();
 
         let dir_id = next_id();
-        writeln!(file, "#{}=DIRECTION('',({:.15E},{:.15E},{:.15E}));",
-            dir_id, dx/len, dy/len, dz/len)?;
+        writeln!(
+            file,
+            "#{}=DIRECTION('',({:.15E},{:.15E},{:.15E}));",
+            dir_id,
+            dx / len,
+            dy / len,
+            dz / len
+        )?;
 
         let vec_id = next_id();
         writeln!(file, "#{}=VECTOR('',#{},{:.15E});", vec_id, dir_id, len)?;
@@ -491,8 +640,11 @@ fn write_step_box(
         writeln!(file, "#{}=LINE('',#{},#{});", line_id, pt_ids[a], vec_id)?;
 
         let eid = next_id();
-        writeln!(file, "#{}=EDGE_CURVE('',#{},#{},#{},.T.);",
-            eid, vp_ids[a], vp_ids[b], line_id)?;
+        writeln!(
+            file,
+            "#{}=EDGE_CURVE('',#{},#{},#{},.T.);",
+            eid, vp_ids[a], vp_ids[b], line_id
+        )?;
         edge_ids[i] = eid;
     }
 
@@ -561,15 +713,21 @@ fn write_step_box(
         for &(edge_idx, fwd) in &fd.edges {
             let oe_id = next_id();
             let orient = if fwd { ".T." } else { ".F." };
-            writeln!(file, "#{}=ORIENTED_EDGE('',*,*,#{},{});",
-                oe_id, edge_ids[edge_idx], orient)?;
+            writeln!(
+                file,
+                "#{}=ORIENTED_EDGE('',*,*,#{},{});",
+                oe_id, edge_ids[edge_idx], orient
+            )?;
             oe_ids.push(oe_id);
         }
 
         // EDGE_LOOP
         let el_id = next_id();
-        writeln!(file, "#{}=EDGE_LOOP('',(#{},#{},#{},#{}));",
-            el_id, oe_ids[0], oe_ids[1], oe_ids[2], oe_ids[3])?;
+        writeln!(
+            file,
+            "#{}=EDGE_LOOP('',(#{},#{},#{},#{}));",
+            el_id, oe_ids[0], oe_ids[1], oe_ids[2], oe_ids[3]
+        )?;
 
         // FACE_OUTER_BOUND
         let fob_id = next_id();
@@ -578,8 +736,11 @@ fn write_step_box(
         // Normal direction
         let n = &fd.normal;
         let n_dir = next_id();
-        writeln!(file, "#{}=DIRECTION('',({:.15E},{:.15E},{:.15E}));",
-            n_dir, n.x, n.y, n.z)?;
+        writeln!(
+            file,
+            "#{}=DIRECTION('',({:.15E},{:.15E},{:.15E}));",
+            n_dir, n.x, n.y, n.z
+        )?;
 
         // Ref direction: pick one perpendicular to normal
         let ref_vec = if n.x.abs() > 0.9 {
@@ -588,16 +749,22 @@ fn write_step_box(
             Vector3::new(1.0, 0.0, 0.0)
         };
         let r_dir = next_id();
-        writeln!(file, "#{}=DIRECTION('',({:.15E},{:.15E},{:.15E}));",
-            r_dir, ref_vec.x, ref_vec.y, ref_vec.z)?;
+        writeln!(
+            file,
+            "#{}=DIRECTION('',({:.15E},{:.15E},{:.15E}));",
+            r_dir, ref_vec.x, ref_vec.y, ref_vec.z
+        )?;
 
         // Plane origin point (reuse a corner point)
         let plane_origin = pt_ids[fd.point_idx];
 
         // AXIS2_PLACEMENT_3D
         let axis_id = next_id();
-        writeln!(file, "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
-            axis_id, plane_origin, n_dir, r_dir)?;
+        writeln!(
+            file,
+            "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
+            axis_id, plane_origin, n_dir, r_dir
+        )?;
 
         // PLANE
         let plane_id = next_id();
@@ -605,8 +772,11 @@ fn write_step_box(
 
         // ADVANCED_FACE
         let face_id = next_id();
-        writeln!(file, "#{}=ADVANCED_FACE('',(#{}),#{},.T.);",
-            face_id, fob_id, plane_id)?;
+        writeln!(
+            file,
+            "#{}=ADVANCED_FACE('',(#{}),#{},.T.);",
+            face_id, fob_id, plane_id
+        )?;
 
         face_ids.push(face_id);
     }
@@ -615,14 +785,20 @@ fn write_step_box(
     let shell_id = next_id();
     write!(file, "#{}=CLOSED_SHELL('Box_Shell',(", shell_id)?;
     for (i, fid) in face_ids.iter().enumerate() {
-        if i > 0 { write!(file, ",")?; }
+        if i > 0 {
+            write!(file, ",")?;
+        }
         write!(file, "#{}", fid)?;
     }
     writeln!(file, "));")?;
 
     // MANIFOLD_SOLID_BREP
     let brep_id = next_id();
-    writeln!(file, "#{}=MANIFOLD_SOLID_BREP('Box_Body',#{});", brep_id, shell_id)?;
+    writeln!(
+        file,
+        "#{}=MANIFOLD_SOLID_BREP('Box_Body',#{});",
+        brep_id, shell_id
+    )?;
 
     write_step_footer(&mut file, &mut next_id, global_dir_z, global_dir_x, brep_id)?;
 
@@ -644,7 +820,11 @@ fn write_step_cylinder(
     write_step_header(&mut file, path)?;
 
     let mut id: u64 = 1;
-    let mut next_id = || { let current = id; id += 1; current };
+    let mut next_id = || {
+        let current = id;
+        id += 1;
+        current
+    };
 
     let top = base + axis * height;
 
@@ -653,60 +833,95 @@ fn write_step_cylinder(
         let v = Vector3::new(1.0, 0.0, 0.0);
         let proj = v - axis * v.dot(&axis);
         let len = proj.norm();
-        if len > 1e-12 { proj / len } else { Vector3::new(0.0, 1.0, 0.0) }
+        if len > 1e-12 {
+            proj / len
+        } else {
+            Vector3::new(0.0, 1.0, 0.0)
+        }
     } else {
         let v = Vector3::new(0.0, 1.0, 0.0);
         let proj = v - axis * v.dot(&axis);
         let len = proj.norm();
-        if len > 1e-12 { proj / len } else { Vector3::new(0.0, 0.0, 1.0) }
+        if len > 1e-12 {
+            proj / len
+        } else {
+            Vector3::new(0.0, 0.0, 1.0)
+        }
     };
 
     // Base center point
     let base_pt = next_id();
-    writeln!(file, "#{}=CARTESIAN_POINT('BaseCenter',({:.15E},{:.15E},{:.15E}));",
-        base_pt, base.x, base.y, base.z)?;
+    writeln!(
+        file,
+        "#{}=CARTESIAN_POINT('BaseCenter',({:.15E},{:.15E},{:.15E}));",
+        base_pt, base.x, base.y, base.z
+    )?;
 
     // Top center point
     let top_pt = next_id();
-    writeln!(file, "#{}=CARTESIAN_POINT('TopCenter',({:.15E},{:.15E},{:.15E}));",
-        top_pt, top.x, top.y, top.z)?;
+    writeln!(
+        file,
+        "#{}=CARTESIAN_POINT('TopCenter',({:.15E},{:.15E},{:.15E}));",
+        top_pt, top.x, top.y, top.z
+    )?;
 
     // Axis direction
     let axis_dir = next_id();
-    writeln!(file, "#{}=DIRECTION('Axis',({:.15E},{:.15E},{:.15E}));",
-        axis_dir, axis.x, axis.y, axis.z)?;
+    writeln!(
+        file,
+        "#{}=DIRECTION('Axis',({:.15E},{:.15E},{:.15E}));",
+        axis_dir, axis.x, axis.y, axis.z
+    )?;
 
     // Negative axis direction (for bottom cap)
     let neg_axis_dir = next_id();
-    writeln!(file, "#{}=DIRECTION('NegAxis',({:.15E},{:.15E},{:.15E}));",
-        neg_axis_dir, -axis.x, -axis.y, -axis.z)?;
+    writeln!(
+        file,
+        "#{}=DIRECTION('NegAxis',({:.15E},{:.15E},{:.15E}));",
+        neg_axis_dir, -axis.x, -axis.y, -axis.z
+    )?;
 
     // Ref direction
     let ref_dir_id = next_id();
-    writeln!(file, "#{}=DIRECTION('RefDir',({:.15E},{:.15E},{:.15E}));",
-        ref_dir_id, ref_dir.x, ref_dir.y, ref_dir.z)?;
+    writeln!(
+        file,
+        "#{}=DIRECTION('RefDir',({:.15E},{:.15E},{:.15E}));",
+        ref_dir_id, ref_dir.x, ref_dir.y, ref_dir.z
+    )?;
 
     // --- Cylindrical surface ---
     let cyl_axis = next_id();
-    writeln!(file, "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
-        cyl_axis, base_pt, axis_dir, ref_dir_id)?;
+    writeln!(
+        file,
+        "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
+        cyl_axis, base_pt, axis_dir, ref_dir_id
+    )?;
 
     let cyl_surf = next_id();
-    writeln!(file, "#{}=CYLINDRICAL_SURFACE('',#{},{:.15E});",
-        cyl_surf, cyl_axis, radius)?;
+    writeln!(
+        file,
+        "#{}=CYLINDRICAL_SURFACE('',#{},{:.15E});",
+        cyl_surf, cyl_axis, radius
+    )?;
 
     // --- Bottom cap plane ---
     let bot_axis = next_id();
-    writeln!(file, "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
-        bot_axis, base_pt, neg_axis_dir, ref_dir_id)?;
+    writeln!(
+        file,
+        "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
+        bot_axis, base_pt, neg_axis_dir, ref_dir_id
+    )?;
 
     let bot_plane = next_id();
     writeln!(file, "#{}=PLANE('',#{});", bot_plane, bot_axis)?;
 
     // --- Top cap plane ---
     let top_axis = next_id();
-    writeln!(file, "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
-        top_axis, top_pt, axis_dir, ref_dir_id)?;
+    writeln!(
+        file,
+        "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
+        top_axis, top_pt, axis_dir, ref_dir_id
+    )?;
 
     let top_plane = next_id();
     writeln!(file, "#{}=PLANE('',#{});", top_plane, top_axis)?;
@@ -715,54 +930,98 @@ fn write_step_cylinder(
     // A seam vertex on the bottom circle
     let seam_bottom = base + ref_dir * radius;
     let seam_bottom_pt = next_id();
-    writeln!(file, "#{}=CARTESIAN_POINT('',({:.15E},{:.15E},{:.15E}));",
-        seam_bottom_pt, seam_bottom.x, seam_bottom.y, seam_bottom.z)?;
+    writeln!(
+        file,
+        "#{}=CARTESIAN_POINT('',({:.15E},{:.15E},{:.15E}));",
+        seam_bottom_pt, seam_bottom.x, seam_bottom.y, seam_bottom.z
+    )?;
     let seam_bottom_vp = next_id();
-    writeln!(file, "#{}=VERTEX_POINT('',#{});", seam_bottom_vp, seam_bottom_pt)?;
+    writeln!(
+        file,
+        "#{}=VERTEX_POINT('',#{});",
+        seam_bottom_vp, seam_bottom_pt
+    )?;
 
     // A seam vertex on the top circle
     let seam_top = top + ref_dir * radius;
     let seam_top_pt = next_id();
-    writeln!(file, "#{}=CARTESIAN_POINT('',({:.15E},{:.15E},{:.15E}));",
-        seam_top_pt, seam_top.x, seam_top.y, seam_top.z)?;
+    writeln!(
+        file,
+        "#{}=CARTESIAN_POINT('',({:.15E},{:.15E},{:.15E}));",
+        seam_top_pt, seam_top.x, seam_top.y, seam_top.z
+    )?;
     let seam_top_vp = next_id();
     writeln!(file, "#{}=VERTEX_POINT('',#{});", seam_top_vp, seam_top_pt)?;
 
     // Bottom circle
     let bot_circle_axis = next_id();
-    writeln!(file, "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
-        bot_circle_axis, base_pt, axis_dir, ref_dir_id)?;
+    writeln!(
+        file,
+        "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
+        bot_circle_axis, base_pt, axis_dir, ref_dir_id
+    )?;
     let bot_circle = next_id();
-    writeln!(file, "#{}=CIRCLE('',#{},{:.15E});", bot_circle, bot_circle_axis, radius)?;
+    writeln!(
+        file,
+        "#{}=CIRCLE('',#{},{:.15E});",
+        bot_circle, bot_circle_axis, radius
+    )?;
 
     // Top circle
     let top_circle_axis = next_id();
-    writeln!(file, "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
-        top_circle_axis, top_pt, axis_dir, ref_dir_id)?;
+    writeln!(
+        file,
+        "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
+        top_circle_axis, top_pt, axis_dir, ref_dir_id
+    )?;
     let top_circle = next_id();
-    writeln!(file, "#{}=CIRCLE('',#{},{:.15E});", top_circle, top_circle_axis, radius)?;
+    writeln!(
+        file,
+        "#{}=CIRCLE('',#{},{:.15E});",
+        top_circle, top_circle_axis, radius
+    )?;
 
     // Bottom edge curve (full circle, same start and end vertex)
     let bot_edge = next_id();
-    writeln!(file, "#{}=EDGE_CURVE('',#{},#{},#{},.T.);",
-        bot_edge, seam_bottom_vp, seam_bottom_vp, bot_circle)?;
+    writeln!(
+        file,
+        "#{}=EDGE_CURVE('',#{},#{},#{},.T.);",
+        bot_edge, seam_bottom_vp, seam_bottom_vp, bot_circle
+    )?;
 
     // Top edge curve
     let top_edge = next_id();
-    writeln!(file, "#{}=EDGE_CURVE('',#{},#{},#{},.T.);",
-        top_edge, seam_top_vp, seam_top_vp, top_circle)?;
+    writeln!(
+        file,
+        "#{}=EDGE_CURVE('',#{},#{},#{},.T.);",
+        top_edge, seam_top_vp, seam_top_vp, top_circle
+    )?;
 
     // Seam line (vertical edge from bottom seam to top seam)
     let seam_line_dir = next_id();
-    writeln!(file, "#{}=DIRECTION('',({:.15E},{:.15E},{:.15E}));",
-        seam_line_dir, axis.x, axis.y, axis.z)?;
+    writeln!(
+        file,
+        "#{}=DIRECTION('',({:.15E},{:.15E},{:.15E}));",
+        seam_line_dir, axis.x, axis.y, axis.z
+    )?;
     let seam_vec = next_id();
-    writeln!(file, "#{}=VECTOR('',#{},{:.15E});", seam_vec, seam_line_dir, height)?;
+    writeln!(
+        file,
+        "#{}=VECTOR('',#{},{:.15E});",
+        seam_vec, seam_line_dir, height
+    )?;
     let seam_line = next_id();
-    writeln!(file, "#{}=LINE('',#{},#{});", seam_line, seam_bottom_pt, seam_vec)?;
+    writeln!(
+        file,
+        "#{}=LINE('',#{},#{});",
+        seam_line, seam_bottom_pt, seam_vec
+    )?;
     let seam_edge = next_id();
-    writeln!(file, "#{}=EDGE_CURVE('',#{},#{},#{},.T.);",
-        seam_edge, seam_bottom_vp, seam_top_vp, seam_line)?;
+    writeln!(
+        file,
+        "#{}=EDGE_CURVE('',#{},#{},#{},.T.);",
+        seam_edge, seam_bottom_vp, seam_top_vp, seam_line
+    )?;
 
     // --- Build faces ---
 
@@ -774,7 +1033,11 @@ fn write_step_cylinder(
     let bot_fb = next_id();
     writeln!(file, "#{}=FACE_OUTER_BOUND('',#{},.T.);", bot_fb, bot_el)?;
     let bot_face = next_id();
-    writeln!(file, "#{}=ADVANCED_FACE('',(#{}),#{},.T.);", bot_face, bot_fb, bot_plane)?;
+    writeln!(
+        file,
+        "#{}=ADVANCED_FACE('',(#{}),#{},.T.);",
+        bot_face, bot_fb, bot_plane
+    )?;
 
     // Top cap face: edge loop around top_edge (forward, outward normal is +axis)
     let top_oe = next_id();
@@ -784,33 +1047,67 @@ fn write_step_cylinder(
     let top_fb = next_id();
     writeln!(file, "#{}=FACE_OUTER_BOUND('',#{},.T.);", top_fb, top_el)?;
     let top_face = next_id();
-    writeln!(file, "#{}=ADVANCED_FACE('',(#{}),#{},.T.);", top_face, top_fb, top_plane)?;
+    writeln!(
+        file,
+        "#{}=ADVANCED_FACE('',(#{}),#{},.T.);",
+        top_face, top_fb, top_plane
+    )?;
 
     // Lateral face: loop is bot_edge(fwd) + seam(fwd) + top_edge(rev) + seam(rev)
     let lat_oe1 = next_id();
-    writeln!(file, "#{}=ORIENTED_EDGE('',*,*,#{},.T.);", lat_oe1, bot_edge)?;
+    writeln!(
+        file,
+        "#{}=ORIENTED_EDGE('',*,*,#{},.T.);",
+        lat_oe1, bot_edge
+    )?;
     let lat_oe2 = next_id();
-    writeln!(file, "#{}=ORIENTED_EDGE('',*,*,#{},.T.);", lat_oe2, seam_edge)?;
+    writeln!(
+        file,
+        "#{}=ORIENTED_EDGE('',*,*,#{},.T.);",
+        lat_oe2, seam_edge
+    )?;
     let lat_oe3 = next_id();
-    writeln!(file, "#{}=ORIENTED_EDGE('',*,*,#{},.F.);", lat_oe3, top_edge)?;
+    writeln!(
+        file,
+        "#{}=ORIENTED_EDGE('',*,*,#{},.F.);",
+        lat_oe3, top_edge
+    )?;
     let lat_oe4 = next_id();
-    writeln!(file, "#{}=ORIENTED_EDGE('',*,*,#{},.F.);", lat_oe4, seam_edge)?;
+    writeln!(
+        file,
+        "#{}=ORIENTED_EDGE('',*,*,#{},.F.);",
+        lat_oe4, seam_edge
+    )?;
     let lat_el = next_id();
-    writeln!(file, "#{}=EDGE_LOOP('',(#{},#{},#{},#{}));",
-        lat_el, lat_oe1, lat_oe2, lat_oe3, lat_oe4)?;
+    writeln!(
+        file,
+        "#{}=EDGE_LOOP('',(#{},#{},#{},#{}));",
+        lat_el, lat_oe1, lat_oe2, lat_oe3, lat_oe4
+    )?;
     let lat_fb = next_id();
     writeln!(file, "#{}=FACE_OUTER_BOUND('',#{},.T.);", lat_fb, lat_el)?;
     let lat_face = next_id();
-    writeln!(file, "#{}=ADVANCED_FACE('',(#{}),#{},.T.);", lat_face, lat_fb, cyl_surf)?;
+    writeln!(
+        file,
+        "#{}=ADVANCED_FACE('',(#{}),#{},.T.);",
+        lat_face, lat_fb, cyl_surf
+    )?;
 
     // CLOSED_SHELL
     let shell_id = next_id();
-    writeln!(file, "#{}=CLOSED_SHELL('Cylinder_Shell',(#{},#{},#{}));",
-        shell_id, bot_face, top_face, lat_face)?;
+    writeln!(
+        file,
+        "#{}=CLOSED_SHELL('Cylinder_Shell',(#{},#{},#{}));",
+        shell_id, bot_face, top_face, lat_face
+    )?;
 
     // MANIFOLD_SOLID_BREP
     let brep_id = next_id();
-    writeln!(file, "#{}=MANIFOLD_SOLID_BREP('Cylinder_Body',#{});", brep_id, shell_id)?;
+    writeln!(
+        file,
+        "#{}=MANIFOLD_SOLID_BREP('Cylinder_Body',#{});",
+        brep_id, shell_id
+    )?;
 
     write_step_footer(&mut file, &mut next_id, axis_dir, ref_dir_id, brep_id)?;
 
@@ -824,9 +1121,15 @@ fn write_step_cylinder(
 fn write_step_header(file: &mut std::fs::File, path: &Path) -> std::io::Result<()> {
     writeln!(file, "ISO-10303-21;")?;
     writeln!(file, "HEADER;")?;
-    writeln!(file, "FILE_DESCRIPTION(('Crusst SDF Geometry Kernel Output'),'2;1');")?;
-    writeln!(file, "FILE_NAME('{}','2026-02-26',('Crusst'),('Crusst Geometry Kernel'),'Crusst 0.1.0','Crusst','');",
-        path.file_name().unwrap_or_default().to_string_lossy())?;
+    writeln!(
+        file,
+        "FILE_DESCRIPTION(('Crusst SDF Geometry Kernel Output'),'2;1');"
+    )?;
+    writeln!(
+        file,
+        "FILE_NAME('{}','2026-02-26',('Crusst'),('Crusst Geometry Kernel'),'Crusst 0.1.0','Crusst','');",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    )?;
     writeln!(file, "FILE_SCHEMA(('AUTOMOTIVE_DESIGN'));")?;
     writeln!(file, "ENDSEC;")?;
     writeln!(file, "DATA;")?;
@@ -844,8 +1147,11 @@ fn write_step_footer(
     let origin_id = next_id();
     writeln!(file, "#{}=CARTESIAN_POINT('',(0.E0,0.E0,0.E0));", origin_id)?;
     let axis_place_id = next_id();
-    writeln!(file, "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
-        axis_place_id, origin_id, dir_z_id, dir_x_id)?;
+    writeln!(
+        file,
+        "#{}=AXIS2_PLACEMENT_3D('',#{},#{},#{});",
+        axis_place_id, origin_id, dir_z_id, dir_x_id
+    )?;
 
     // Pre-allocate IDs for the geometric context group to avoid fragile
     // forward references (geo_context references uncertainty and length_unit).
@@ -853,50 +1159,89 @@ fn write_step_footer(
     let uncertainty_id = next_id();
     let length_unit_id = next_id();
 
-    writeln!(file,
+    writeln!(
+        file,
         "#{}=(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#{}))GLOBAL_UNIT_ASSIGNED_CONTEXT((#{})));",
-        geo_context_id, uncertainty_id, length_unit_id)?;
+        geo_context_id, uncertainty_id, length_unit_id
+    )?;
 
-    writeln!(file, "#{}=UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-7),#{},'distance accuracy');",
-        uncertainty_id, length_unit_id)?;
+    writeln!(
+        file,
+        "#{}=UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-7),#{},'distance accuracy');",
+        uncertainty_id, length_unit_id
+    )?;
 
-    writeln!(file, "#{}=(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.));", length_unit_id)?;
+    writeln!(
+        file,
+        "#{}=(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.));",
+        length_unit_id
+    )?;
 
     // Shape representation
     let shape_rep_id = next_id();
-    writeln!(file, "#{}=SHAPE_REPRESENTATION('Crusst_Shape',(#{},#{}),#{});",
-        shape_rep_id, axis_place_id, brep_id, geo_context_id)?;
+    writeln!(
+        file,
+        "#{}=SHAPE_REPRESENTATION('Crusst_Shape',(#{},#{}),#{});",
+        shape_rep_id, axis_place_id, brep_id, geo_context_id
+    )?;
 
     // Pre-allocate product definition IDs to avoid forward references.
     let product_id = next_id();
     let product_context_id = next_id();
     let app_context_id = next_id();
 
-    writeln!(file, "#{}=PRODUCT('Crusst_Part','Crusst SDF Part','',(#{}));",
-        product_id, product_context_id)?;
+    writeln!(
+        file,
+        "#{}=PRODUCT('Crusst_Part','Crusst SDF Part','',(#{}));",
+        product_id, product_context_id
+    )?;
 
-    writeln!(file, "#{}=PRODUCT_CONTEXT('',#{},'mechanical');",
-        product_context_id, app_context_id)?;
+    writeln!(
+        file,
+        "#{}=PRODUCT_CONTEXT('',#{},'mechanical');",
+        product_context_id, app_context_id
+    )?;
 
-    writeln!(file, "#{}=APPLICATION_CONTEXT('automotive design');", app_context_id)?;
+    writeln!(
+        file,
+        "#{}=APPLICATION_CONTEXT('automotive design');",
+        app_context_id
+    )?;
 
     let pdf_id = next_id();
-    writeln!(file, "#{}=PRODUCT_DEFINITION_FORMATION('','',#{});", pdf_id, product_id)?;
+    writeln!(
+        file,
+        "#{}=PRODUCT_DEFINITION_FORMATION('','',#{});",
+        pdf_id, product_id
+    )?;
 
     let pdc_id = next_id();
-    writeln!(file, "#{}=PRODUCT_DEFINITION_CONTEXT('part definition',#{},'design');",
-        pdc_id, app_context_id)?;
+    writeln!(
+        file,
+        "#{}=PRODUCT_DEFINITION_CONTEXT('part definition',#{},'design');",
+        pdc_id, app_context_id
+    )?;
 
     let pd_id = next_id();
-    writeln!(file, "#{}=PRODUCT_DEFINITION('design','',#{},#{});",
-        pd_id, pdf_id, pdc_id)?;
+    writeln!(
+        file,
+        "#{}=PRODUCT_DEFINITION('design','',#{},#{});",
+        pd_id, pdf_id, pdc_id
+    )?;
 
     let pds_id = next_id();
-    writeln!(file, "#{}=PRODUCT_DEFINITION_SHAPE('','',#{});", pds_id, pd_id)?;
+    writeln!(
+        file,
+        "#{}=PRODUCT_DEFINITION_SHAPE('','',#{});",
+        pds_id, pd_id
+    )?;
 
     let sdr_id = next_id();
-    writeln!(file, "#{}=SHAPE_DEFINITION_REPRESENTATION(#{},#{});",
-        sdr_id, pds_id, shape_rep_id)?;
+    writeln!(
+        file,
+        "#{}=SHAPE_DEFINITION_REPRESENTATION(#{},#{});",
+        sdr_id, pds_id, shape_rep_id
+    )?;
 
     writeln!(file, "ENDSEC;")?;
     writeln!(file, "END-ISO-10303-21;")?;

@@ -13,7 +13,11 @@ pub trait Path: Send + Sync {
         let t1 = (t + eps).min(1.0);
         let dir = self.point(t1) - self.point(t0);
         let len = dir.norm();
-        if len > 1e-10 { dir / len } else { Vector3::new(0.0, 0.0, 1.0) }
+        if len > 1e-10 {
+            dir / len
+        } else {
+            Vector3::new(0.0, 0.0, 1.0)
+        }
     }
 }
 
@@ -37,7 +41,11 @@ impl Path for LinePath {
     fn tangent(&self, _t: f64) -> Vector3<f64> {
         let dir = self.end - self.start;
         let len = dir.norm();
-        if len > 1e-10 { dir / len } else { Vector3::new(0.0, 0.0, 1.0) }
+        if len > 1e-10 {
+            dir / len
+        } else {
+            Vector3::new(0.0, 0.0, 1.0)
+        }
     }
 }
 
@@ -51,7 +59,11 @@ pub struct HelixPath {
 
 impl HelixPath {
     pub fn new(radius: f64, pitch: f64, turns: f64) -> Self {
-        Self { radius, pitch, turns }
+        Self {
+            radius,
+            pitch,
+            turns,
+        }
     }
 }
 
@@ -59,11 +71,7 @@ impl Path for HelixPath {
     fn point(&self, t: f64) -> Vector3<f64> {
         let angle = t * 2.0 * PI * self.turns;
         let height = t * self.pitch * self.turns;
-        Vector3::new(
-            self.radius * angle.cos(),
-            self.radius * angle.sin(),
-            height,
-        )
+        Vector3::new(self.radius * angle.cos(), self.radius * angle.sin(), height)
     }
 }
 

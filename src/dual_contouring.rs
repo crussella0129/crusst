@@ -79,10 +79,7 @@ pub fn extract_mesh_adaptive(
                 continue;
             }
             let ek = edge_key(&corners[ci0], &corners[ci1]);
-            edge_cells
-                .entry(ek)
-                .or_default()
-                .push((key, *cell));
+            edge_cells.entry(ek).or_default().push((key, *cell));
         }
     }
 
@@ -146,10 +143,7 @@ pub fn extract_mesh_adaptive(
     }
 
     // Phase 4: Compute per-vertex normals.
-    let normals: Vec<Vector3<f64>> = vertices
-        .iter()
-        .map(|v| node.gradient(*v))
-        .collect();
+    let normals: Vec<Vector3<f64>> = vertices.iter().map(|v| node.gradient(*v)).collect();
 
     TriangleMesh {
         vertices,
@@ -163,11 +157,7 @@ pub fn extract_mesh_adaptive(
 /// This builds an octree by evaluating the SDF at corners directly (no interval
 /// pruning or analytical gradients), then runs the same DC algorithm with
 /// central-difference gradients.
-pub fn extract_mesh_from_sdf(
-    sdf: &dyn Sdf,
-    bbox: &BBox3,
-    settings: &MeshSettings,
-) -> TriangleMesh {
+pub fn extract_mesh_from_sdf(sdf: &dyn Sdf, bbox: &BBox3, settings: &MeshSettings) -> TriangleMesh {
     // Build the octree manually using the trait object.
     let root = build_cell_from_sdf(sdf, bbox, 0, settings);
     let tree_wrapper = OctreeWrapper { root };
@@ -206,10 +196,7 @@ pub fn extract_mesh_from_sdf(
                 continue;
             }
             let ek = edge_key(&corners[ci0], &corners[ci1]);
-            edge_cells
-                .entry(ek)
-                .or_default()
-                .push((key, *cell));
+            edge_cells.entry(ek).or_default().push((key, *cell));
         }
     }
 
@@ -327,9 +314,23 @@ fn edge_key(p0: &Vector3<f64>, p1: &Vector3<f64>) -> EdgeKey {
     // Order endpoints lexicographically so that the same edge from
     // different cells produces the same key.
     if (ax, ay, az) <= (bx, by, bz) {
-        EdgeKey { ax, ay, az, bx, by, bz }
+        EdgeKey {
+            ax,
+            ay,
+            az,
+            bx,
+            by,
+            bz,
+        }
     } else {
-        EdgeKey { ax: bx, ay: by, az: bz, bx: ax, by: ay, bz: az }
+        EdgeKey {
+            ax: bx,
+            ay: by,
+            az: bz,
+            bx: ax,
+            by: ay,
+            bz: az,
+        }
     }
 }
 
@@ -352,11 +353,20 @@ fn edge_key(p0: &Vector3<f64>, p1: &Vector3<f64>) -> EdgeKey {
 /// Edges along Z (4): 0-4, 1-5, 2-6, 3-7
 const CELL_EDGES: [(usize, usize); 12] = [
     // X edges
-    (0, 1), (2, 3), (4, 5), (6, 7),
+    (0, 1),
+    (2, 3),
+    (4, 5),
+    (6, 7),
     // Y edges
-    (0, 2), (1, 3), (4, 6), (5, 7),
+    (0, 2),
+    (1, 3),
+    (4, 6),
+    (5, 7),
     // Z edges
-    (0, 4), (1, 5), (2, 6), (3, 7),
+    (0, 4),
+    (1, 5),
+    (2, 6),
+    (3, 7),
 ];
 
 // ---------------------------------------------------------------------------
@@ -422,11 +432,7 @@ fn find_crossing_sdf(
 // ---------------------------------------------------------------------------
 
 /// Compute the QEF vertex for a surface leaf cell using the SdfNode DAG.
-fn compute_cell_vertex(
-    node: &SdfNode,
-    cell: &OctreeCell,
-    tolerance: f64,
-) -> Vector3<f64> {
+fn compute_cell_vertex(node: &SdfNode, cell: &OctreeCell, tolerance: f64) -> Vector3<f64> {
     let corners = cell.bbox.corners();
     let mut positions: Vec<Vector3<f64>> = Vec::new();
     let mut normals: Vec<Vector3<f64>> = Vec::new();
@@ -451,11 +457,7 @@ fn compute_cell_vertex(
 }
 
 /// Compute the QEF vertex for a surface leaf cell using a &dyn Sdf.
-fn compute_cell_vertex_sdf(
-    sdf: &dyn Sdf,
-    cell: &OctreeCell,
-    tolerance: f64,
-) -> Vector3<f64> {
+fn compute_cell_vertex_sdf(sdf: &dyn Sdf, cell: &OctreeCell, tolerance: f64) -> Vector3<f64> {
     let corners = cell.bbox.corners();
     let mut positions: Vec<Vector3<f64>> = Vec::new();
     let mut normals: Vec<Vector3<f64>> = Vec::new();
@@ -517,8 +519,16 @@ fn sort_vertices_around_edge(
 
     // Reconstruct approximate edge direction from the edge key.
     let scale = (1u64 << 20) as f64;
-    let ea = Vector3::new(ek.ax as f64 / scale, ek.ay as f64 / scale, ek.az as f64 / scale);
-    let eb = Vector3::new(ek.bx as f64 / scale, ek.by as f64 / scale, ek.bz as f64 / scale);
+    let ea = Vector3::new(
+        ek.ax as f64 / scale,
+        ek.ay as f64 / scale,
+        ek.az as f64 / scale,
+    );
+    let eb = Vector3::new(
+        ek.bx as f64 / scale,
+        ek.by as f64 / scale,
+        ek.bz as f64 / scale,
+    );
     let edge_dir = (eb - ea).normalize();
     let edge_mid = (ea + eb) * 0.5;
 
@@ -648,9 +658,8 @@ fn build_cell_from_sdf(
     // No interval pruning for trait objects. Subdivide if sign change or below min_depth.
     if depth < settings.max_depth && (has_sign_change || depth < settings.min_depth) {
         let octants = bbox.octants();
-        let children: [OctreeCell; 8] = std::array::from_fn(|i| {
-            build_cell_from_sdf(sdf, &octants[i], depth + 1, settings)
-        });
+        let children: [OctreeCell; 8] =
+            std::array::from_fn(|i| build_cell_from_sdf(sdf, &octants[i], depth + 1, settings));
 
         return OctreeCell {
             bbox: *bbox,

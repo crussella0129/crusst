@@ -24,7 +24,11 @@ impl FrenetFrame {
         let normal = t.cross(&arbitrary).normalize();
         let binormal = t.cross(&normal).normalize();
 
-        Self { tangent: t, normal, binormal }
+        Self {
+            tangent: t,
+            normal,
+            binormal,
+        }
     }
 
     /// Build a rotation matrix that maps local frame to world frame.

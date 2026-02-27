@@ -1,6 +1,6 @@
-use nalgebra::{Rotation3, Vector2, Vector3};
-use crate::primitives;
 use crate::csg;
+use crate::primitives;
+use nalgebra::{Rotation3, Vector2, Vector3};
 
 /// Trait for any object that can evaluate a signed distance.
 pub trait Sdf: Send + Sync {
@@ -41,7 +41,10 @@ pub struct Box3 {
 
 impl Box3 {
     pub fn new(center: Vector3<f64>, half_extents: Vector3<f64>) -> Self {
-        Self { center, half_extents }
+        Self {
+            center,
+            half_extents,
+        }
     }
 }
 
@@ -82,7 +85,12 @@ pub struct Cylinder {
 
 impl Cylinder {
     pub fn new(base: Vector3<f64>, axis: Vector3<f64>, radius: f64, height: f64) -> Self {
-        Self { base, axis: axis.normalize(), radius, height }
+        Self {
+            base,
+            axis: axis.normalize(),
+            radius,
+            height,
+        }
     }
 }
 
@@ -101,7 +109,11 @@ pub struct Torus {
 
 impl Torus {
     pub fn new(center: Vector3<f64>, major_radius: f64, minor_radius: f64) -> Self {
-        Self { center, major_radius, minor_radius }
+        Self {
+            center,
+            major_radius,
+            minor_radius,
+        }
     }
 }
 
@@ -120,7 +132,11 @@ pub struct RoundedBox {
 
 impl RoundedBox {
     pub fn new(center: Vector3<f64>, half_extents: Vector3<f64>, radius: f64) -> Self {
-        Self { center, half_extents, radius }
+        Self {
+            center,
+            half_extents,
+            radius,
+        }
     }
 }
 
@@ -177,14 +193,23 @@ pub struct RoundedCylinder {
 
 impl RoundedCylinder {
     pub fn new(center: Vector3<f64>, radius: f64, round_radius: f64, half_height: f64) -> Self {
-        Self { center, radius, round_radius, half_height }
+        Self {
+            center,
+            radius,
+            round_radius,
+            half_height,
+        }
     }
 }
 
 impl Sdf for RoundedCylinder {
     fn evaluate(&self, point: Vector3<f64>) -> f64 {
         primitives::sdf_rounded_cylinder(
-            point, self.center, self.radius, self.round_radius, self.half_height,
+            point,
+            self.center,
+            self.radius,
+            self.round_radius,
+            self.half_height,
         )
     }
 }
@@ -219,7 +244,9 @@ pub struct Union<A: Sdf, B: Sdf> {
 }
 
 impl<A: Sdf, B: Sdf> Union<A, B> {
-    pub fn new(a: A, b: B) -> Self { Self { a, b } }
+    pub fn new(a: A, b: B) -> Self {
+        Self { a, b }
+    }
 }
 
 impl<A: Sdf, B: Sdf> Sdf for Union<A, B> {
@@ -234,7 +261,9 @@ pub struct Intersection<A: Sdf, B: Sdf> {
 }
 
 impl<A: Sdf, B: Sdf> Intersection<A, B> {
-    pub fn new(a: A, b: B) -> Self { Self { a, b } }
+    pub fn new(a: A, b: B) -> Self {
+        Self { a, b }
+    }
 }
 
 impl<A: Sdf, B: Sdf> Sdf for Intersection<A, B> {
@@ -249,7 +278,9 @@ pub struct Difference<A: Sdf, B: Sdf> {
 }
 
 impl<A: Sdf, B: Sdf> Difference<A, B> {
-    pub fn new(a: A, b: B) -> Self { Self { a, b } }
+    pub fn new(a: A, b: B) -> Self {
+        Self { a, b }
+    }
 }
 
 impl<A: Sdf, B: Sdf> Sdf for Difference<A, B> {
@@ -266,7 +297,9 @@ pub struct SmoothUnion<A: Sdf, B: Sdf> {
 }
 
 impl<A: Sdf, B: Sdf> SmoothUnion<A, B> {
-    pub fn new(a: A, b: B, k: f64) -> Self { Self { a, b, k } }
+    pub fn new(a: A, b: B, k: f64) -> Self {
+        Self { a, b, k }
+    }
 }
 
 impl<A: Sdf, B: Sdf> Sdf for SmoothUnion<A, B> {
@@ -283,7 +316,9 @@ pub struct SmoothIntersection<A: Sdf, B: Sdf> {
 }
 
 impl<A: Sdf, B: Sdf> SmoothIntersection<A, B> {
-    pub fn new(a: A, b: B, k: f64) -> Self { Self { a, b, k } }
+    pub fn new(a: A, b: B, k: f64) -> Self {
+        Self { a, b, k }
+    }
 }
 
 impl<A: Sdf, B: Sdf> Sdf for SmoothIntersection<A, B> {
@@ -300,7 +335,9 @@ pub struct SmoothDifference<A: Sdf, B: Sdf> {
 }
 
 impl<A: Sdf, B: Sdf> SmoothDifference<A, B> {
-    pub fn new(a: A, b: B, k: f64) -> Self { Self { a, b, k } }
+    pub fn new(a: A, b: B, k: f64) -> Self {
+        Self { a, b, k }
+    }
 }
 
 impl<A: Sdf, B: Sdf> Sdf for SmoothDifference<A, B> {
@@ -320,7 +357,9 @@ pub struct Translate<S: Sdf> {
 }
 
 impl<S: Sdf> Translate<S> {
-    pub fn new(shape: S, offset: Vector3<f64>) -> Self { Self { shape, offset } }
+    pub fn new(shape: S, offset: Vector3<f64>) -> Self {
+        Self { shape, offset }
+    }
 }
 
 impl<S: Sdf> Sdf for Translate<S> {
@@ -339,7 +378,11 @@ pub struct Rotate<S: Sdf> {
 impl<S: Sdf> Rotate<S> {
     pub fn new(shape: S, rotation: Rotation3<f64>) -> Self {
         let inv = rotation.inverse();
-        Self { shape, rotation, inv }
+        Self {
+            shape,
+            rotation,
+            inv,
+        }
     }
 }
 
@@ -359,7 +402,11 @@ pub struct Scale<S: Sdf> {
 
 impl<S: Sdf> Scale<S> {
     pub fn new(shape: S, factor: f64) -> Self {
-        Self { shape, factor, inv: 1.0 / factor }
+        Self {
+            shape,
+            factor,
+            inv: 1.0 / factor,
+        }
     }
 }
 
@@ -377,7 +424,10 @@ pub struct Mirror<S: Sdf> {
 
 impl<S: Sdf> Mirror<S> {
     pub fn new(shape: S, normal: Vector3<f64>) -> Self {
-        Self { shape, normal: normal.normalize() }
+        Self {
+            shape,
+            normal: normal.normalize(),
+        }
     }
 }
 
@@ -397,7 +447,9 @@ pub struct Shell<S: Sdf> {
 }
 
 impl<S: Sdf> Shell<S> {
-    pub fn new(shape: S, thickness: f64) -> Self { Self { shape, thickness } }
+    pub fn new(shape: S, thickness: f64) -> Self {
+        Self { shape, thickness }
+    }
 }
 
 impl<S: Sdf> Sdf for Shell<S> {
@@ -413,7 +465,9 @@ pub struct Round<S: Sdf> {
 }
 
 impl<S: Sdf> Round<S> {
-    pub fn new(shape: S, radius: f64) -> Self { Self { shape, radius } }
+    pub fn new(shape: S, radius: f64) -> Self {
+        Self { shape, radius }
+    }
 }
 
 impl<S: Sdf> Sdf for Round<S> {
@@ -432,7 +486,9 @@ pub struct FnSdf<F: Fn(Vector3<f64>) -> f64 + Send + Sync> {
 }
 
 impl<F: Fn(Vector3<f64>) -> f64 + Send + Sync> FnSdf<F> {
-    pub fn new(func: F) -> Self { Self { func } }
+    pub fn new(func: F) -> Self {
+        Self { func }
+    }
 }
 
 impl<F: Fn(Vector3<f64>) -> f64 + Send + Sync> Sdf for FnSdf<F> {
@@ -447,7 +503,9 @@ pub struct FnSdf2d<F: Fn(Vector2<f64>) -> f64 + Send + Sync> {
 }
 
 impl<F: Fn(Vector2<f64>) -> f64 + Send + Sync> FnSdf2d<F> {
-    pub fn new(func: F) -> Self { Self { func } }
+    pub fn new(func: F) -> Self {
+        Self { func }
+    }
 }
 
 impl<F: Fn(Vector2<f64>) -> f64 + Send + Sync> Sdf2d for FnSdf2d<F> {
@@ -467,7 +525,9 @@ pub struct Circle2d {
 }
 
 impl Circle2d {
-    pub fn new(center: Vector2<f64>, radius: f64) -> Self { Self { center, radius } }
+    pub fn new(center: Vector2<f64>, radius: f64) -> Self {
+        Self { center, radius }
+    }
 }
 
 impl Sdf2d for Circle2d {
@@ -484,7 +544,10 @@ pub struct Rect2d {
 
 impl Rect2d {
     pub fn new(center: Vector2<f64>, half_extents: Vector2<f64>) -> Self {
-        Self { center, half_extents }
+        Self {
+            center,
+            half_extents,
+        }
     }
 }
 
@@ -504,7 +567,9 @@ pub struct Union2d<A: Sdf2d, B: Sdf2d> {
 }
 
 impl<A: Sdf2d, B: Sdf2d> Union2d<A, B> {
-    pub fn new(a: A, b: B) -> Self { Self { a, b } }
+    pub fn new(a: A, b: B) -> Self {
+        Self { a, b }
+    }
 }
 
 impl<A: Sdf2d, B: Sdf2d> Sdf2d for Union2d<A, B> {
@@ -520,7 +585,9 @@ pub struct Difference2d<A: Sdf2d, B: Sdf2d> {
 }
 
 impl<A: Sdf2d, B: Sdf2d> Difference2d<A, B> {
-    pub fn new(a: A, b: B) -> Self { Self { a, b } }
+    pub fn new(a: A, b: B) -> Self {
+        Self { a, b }
+    }
 }
 
 impl<A: Sdf2d, B: Sdf2d> Sdf2d for Difference2d<A, B> {
@@ -546,7 +613,9 @@ pub struct Revolve<P: Sdf2d> {
 }
 
 impl<P: Sdf2d> Revolve<P> {
-    pub fn new(profile: P) -> Self { Self { profile } }
+    pub fn new(profile: P) -> Self {
+        Self { profile }
+    }
 }
 
 impl<P: Sdf2d> Sdf for Revolve<P> {
@@ -566,7 +635,12 @@ pub struct Extrude<P: Sdf2d> {
 }
 
 impl<P: Sdf2d> Extrude<P> {
-    pub fn new(profile: P, half_height: f64) -> Self { Self { profile, half_height } }
+    pub fn new(profile: P, half_height: f64) -> Self {
+        Self {
+            profile,
+            half_height,
+        }
+    }
 }
 
 impl<P: Sdf2d> Sdf for Extrude<P> {

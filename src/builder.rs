@@ -15,13 +15,13 @@
 //! bracket.export_obj("bracket.obj").unwrap();
 //! ```
 
-use std::sync::Arc;
+use crate::dag::SdfNode;
+use crate::dual_contouring::extract_mesh_adaptive;
+use crate::types::{BBox3, MeshSettings, TriangleMesh};
+use crate::voxel::VoxelGrid;
 use nalgebra::{Rotation3, Vector3};
 use rayon::prelude::*;
-use crate::dag::SdfNode;
-use crate::types::{TriangleMesh, MeshSettings, BBox3};
-use crate::voxel::VoxelGrid;
-use crate::dual_contouring::extract_mesh_adaptive;
+use std::sync::Arc;
 
 /// A composable, immutable shape backed by an SDF expression DAG.
 ///
@@ -295,17 +295,22 @@ impl Shape {
 pub(crate) fn compute_bbox(node: &SdfNode) -> BBox3 {
     match node {
         // -- Primitives --------------------------------------------------------
-
         SdfNode::Sphere { center, radius } => {
             let r = Vector3::new(*radius, *radius, *radius);
             BBox3::new(center - r, center + r)
         }
 
-        SdfNode::Box3 { center, half_extents } => {
-            BBox3::new(center - half_extents, center + half_extents)
-        }
+        SdfNode::Box3 {
+            center,
+            half_extents,
+        } => BBox3::new(center - half_extents, center + half_extents),
 
-        SdfNode::Cylinder { base, axis, radius, height } => {
+        SdfNode::Cylinder {
+            base,
+            axis,
+            radius,
+            height,
+        } => {
             // The cylinder goes from base to base + axis * height.
             // Compute a conservative AABB from the two end-cap discs.
             let top = base + axis * *height;
@@ -339,12 +344,24 @@ pub(crate) fn compute_bbox(node: &SdfNode) -> BBox3 {
             let min_b = b - ext;
             let max_b = b + ext;
             BBox3::new(
-                Vector3::new(min_a.x.min(min_b.x), min_a.y.min(min_b.y), min_a.z.min(min_b.z)),
-                Vector3::new(max_a.x.max(max_b.x), max_a.y.max(max_b.y), max_a.z.max(max_b.z)),
+                Vector3::new(
+                    min_a.x.min(min_b.x),
+                    min_a.y.min(min_b.y),
+                    min_a.z.min(min_b.z),
+                ),
+                Vector3::new(
+                    max_a.x.max(max_b.x),
+                    max_a.y.max(max_b.y),
+                    max_a.z.max(max_b.z),
+                ),
             )
         }
 
-        SdfNode::Torus { center, major_radius, minor_radius } => {
+        SdfNode::Torus {
+            center,
+            major_radius,
+            minor_radius,
+        } => {
             // Torus lies in XZ plane. Extent in X and Z is major + minor,
             // extent in Y is just minor.
             let r_xz = major_radius + minor_radius;
@@ -354,7 +371,11 @@ pub(crate) fn compute_bbox(node: &SdfNode) -> BBox3 {
             )
         }
 
-        SdfNode::RoundedBox { center, half_extents, radius } => {
+        SdfNode::RoundedBox {
+            center,
+            half_extents,
+            radius,
+        } => {
             let total = half_extents + Vector3::new(*radius, *radius, *radius);
             BBox3::new(center - total, center + total)
         }
@@ -366,16 +387,27 @@ pub(crate) fn compute_bbox(node: &SdfNode) -> BBox3 {
             let min_b = b - ext;
             let max_b = b + ext;
             BBox3::new(
-                Vector3::new(min_a.x.min(min_b.x), min_a.y.min(min_b.y), min_a.z.min(min_b.z)),
-                Vector3::new(max_a.x.max(max_b.x), max_a.y.max(max_b.y), max_a.z.max(max_b.z)),
+                Vector3::new(
+                    min_a.x.min(min_b.x),
+                    min_a.y.min(min_b.y),
+                    min_a.z.min(min_b.z),
+                ),
+                Vector3::new(
+                    max_a.x.max(max_b.x),
+                    max_a.y.max(max_b.y),
+                    max_a.z.max(max_b.z),
+                ),
             )
         }
 
-        SdfNode::Ellipsoid { center, radii } => {
-            BBox3::new(center - radii, center + radii)
-        }
+        SdfNode::Ellipsoid { center, radii } => BBox3::new(center - radii, center + radii),
 
-        SdfNode::RoundedCylinder { center, radius, round_radius, half_height } => {
+        SdfNode::RoundedCylinder {
+            center,
+            radius,
+            round_radius,
+            half_height,
+        } => {
             let r_xz = radius + round_radius;
             let h = half_height + round_radius;
             BBox3::new(
@@ -387,20 +419,24 @@ pub(crate) fn compute_bbox(node: &SdfNode) -> BBox3 {
         SdfNode::HalfSpace { .. } => {
             // Half-space is unbounded; use a large fallback.
             let big = 1000.0;
-            BBox3::new(
-                Vector3::new(-big, -big, -big),
-                Vector3::new(big, big, big),
-            )
+            BBox3::new(Vector3::new(-big, -big, -big), Vector3::new(big, big, big))
         }
 
         // -- CSG ---------------------------------------------------------------
-
         SdfNode::Union(a, b) => {
             let ba = compute_bbox(a);
             let bb = compute_bbox(b);
             BBox3::new(
-                Vector3::new(ba.min.x.min(bb.min.x), ba.min.y.min(bb.min.y), ba.min.z.min(bb.min.z)),
-                Vector3::new(ba.max.x.max(bb.max.x), ba.max.y.max(bb.max.y), ba.max.z.max(bb.max.z)),
+                Vector3::new(
+                    ba.min.x.min(bb.min.x),
+                    ba.min.y.min(bb.min.y),
+                    ba.min.z.min(bb.min.z),
+                ),
+                Vector3::new(
+                    ba.max.x.max(bb.max.x),
+                    ba.max.y.max(bb.max.y),
+                    ba.max.z.max(bb.max.z),
+                ),
             )
         }
 
@@ -409,8 +445,16 @@ pub(crate) fn compute_bbox(node: &SdfNode) -> BBox3 {
             let ba = compute_bbox(a);
             let bb = compute_bbox(b);
             BBox3::new(
-                Vector3::new(ba.min.x.max(bb.min.x), ba.min.y.max(bb.min.y), ba.min.z.max(bb.min.z)),
-                Vector3::new(ba.max.x.min(bb.max.x), ba.max.y.min(bb.max.y), ba.max.z.min(bb.max.z)),
+                Vector3::new(
+                    ba.min.x.max(bb.min.x),
+                    ba.min.y.max(bb.min.y),
+                    ba.min.z.max(bb.min.z),
+                ),
+                Vector3::new(
+                    ba.max.x.min(bb.max.x),
+                    ba.max.y.min(bb.max.y),
+                    ba.max.z.min(bb.max.z),
+                ),
             )
         }
 
@@ -425,8 +469,16 @@ pub(crate) fn compute_bbox(node: &SdfNode) -> BBox3 {
             // Expand by k to account for the blending region.
             let ext = Vector3::new(*k, *k, *k);
             BBox3::new(
-                Vector3::new(ba.min.x.min(bb.min.x), ba.min.y.min(bb.min.y), ba.min.z.min(bb.min.z)) - ext,
-                Vector3::new(ba.max.x.max(bb.max.x), ba.max.y.max(bb.max.y), ba.max.z.max(bb.max.z)) + ext,
+                Vector3::new(
+                    ba.min.x.min(bb.min.x),
+                    ba.min.y.min(bb.min.y),
+                    ba.min.z.min(bb.min.z),
+                ) - ext,
+                Vector3::new(
+                    ba.max.x.max(bb.max.x),
+                    ba.max.y.max(bb.max.y),
+                    ba.max.z.max(bb.max.z),
+                ) + ext,
             )
         }
 
@@ -435,8 +487,16 @@ pub(crate) fn compute_bbox(node: &SdfNode) -> BBox3 {
             let bb = compute_bbox(b);
             let ext = Vector3::new(*k, *k, *k);
             BBox3::new(
-                Vector3::new(ba.min.x.max(bb.min.x), ba.min.y.max(bb.min.y), ba.min.z.max(bb.min.z)) - ext,
-                Vector3::new(ba.max.x.min(bb.max.x), ba.max.y.min(bb.max.y), ba.max.z.min(bb.max.z)) + ext,
+                Vector3::new(
+                    ba.min.x.max(bb.min.x),
+                    ba.min.y.max(bb.min.y),
+                    ba.min.z.max(bb.min.z),
+                ) - ext,
+                Vector3::new(
+                    ba.max.x.min(bb.max.x),
+                    ba.max.y.min(bb.max.y),
+                    ba.max.z.min(bb.max.z),
+                ) + ext,
             )
         }
 
@@ -447,7 +507,6 @@ pub(crate) fn compute_bbox(node: &SdfNode) -> BBox3 {
         }
 
         // -- Transforms --------------------------------------------------------
-
         SdfNode::Translate(inner, offset) => {
             let b = compute_bbox(inner);
             BBox3::new(b.min + offset, b.max + offset)
@@ -511,24 +570,16 @@ pub(crate) fn compute_bbox(node: &SdfNode) -> BBox3 {
         }
 
         // -- 2D -> 3D ----------------------------------------------------------
-
         SdfNode::Revolve(_) | SdfNode::Extrude(_, _) => {
             // Conservative fallback for 2D->3D operations.
             let big = 100.0;
-            BBox3::new(
-                Vector3::new(-big, -big, -big),
-                Vector3::new(big, big, big),
-            )
+            BBox3::new(Vector3::new(-big, -big, -big), Vector3::new(big, big, big))
         }
 
         // -- Opaque ------------------------------------------------------------
-
         SdfNode::Custom(_) => {
             let big = 100.0;
-            BBox3::new(
-                Vector3::new(-big, -big, -big),
-                Vector3::new(big, big, big),
-            )
+            BBox3::new(Vector3::new(-big, -big, -big), Vector3::new(big, big, big))
         }
     }
 }
@@ -604,11 +655,12 @@ impl Shape {
                 let ix = idx / (ny * nz);
                 let iy = (idx / nz) % ny;
                 let iz = idx % nz;
-                let world = origin + Vector3::new(
-                    (ix as f64 + 0.5) * voxel_size,
-                    (iy as f64 + 0.5) * voxel_size,
-                    (iz as f64 + 0.5) * voxel_size,
-                );
+                let world = origin
+                    + Vector3::new(
+                        (ix as f64 + 0.5) * voxel_size,
+                        (iy as f64 + 0.5) * voxel_size,
+                        (iz as f64 + 0.5) * voxel_size,
+                    );
                 node.evaluate(world) as f32
             })
             .collect();
@@ -631,5 +683,4 @@ impl Shape {
     pub fn node(&self) -> &SdfNode {
         &self.node
     }
-
 }

@@ -17,14 +17,8 @@ fn qef_single_plane_intersection() {
 fn qef_two_perpendicular_planes() {
     // Edge: crossing at (5, 0, z) with normal (1,0,0) and (0, 0, z) at normal (0,0,1)
     // QEF should place vertex near the edge intersection
-    let positions = vec![
-        Vector3::new(5.0, 0.0, 0.0),
-        Vector3::new(0.0, 0.0, 5.0),
-    ];
-    let normals = vec![
-        Vector3::new(1.0, 0.0, 0.0),
-        Vector3::new(0.0, 0.0, 1.0),
-    ];
+    let positions = vec![Vector3::new(5.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 5.0)];
+    let normals = vec![Vector3::new(1.0, 0.0, 0.0), Vector3::new(0.0, 0.0, 1.0)];
     let bounds = BBox3::new(Vector3::new(0.0, -5.0, 0.0), Vector3::new(10.0, 5.0, 10.0));
     let v = solve_qef(&positions, &normals, &bounds);
     assert!((v.x - 5.0).abs() < 1e-2);
