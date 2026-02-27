@@ -396,16 +396,7 @@ impl SdfNode {
             SdfNode::Rotate(inner, rotation) => {
                 // Conservative: compute AABB of the inverse-rotated bbox corners
                 let inv = rotation.inverse();
-                let corners = [
-                    Vector3::new(bbox.min.x, bbox.min.y, bbox.min.z),
-                    Vector3::new(bbox.max.x, bbox.min.y, bbox.min.z),
-                    Vector3::new(bbox.min.x, bbox.max.y, bbox.min.z),
-                    Vector3::new(bbox.max.x, bbox.max.y, bbox.min.z),
-                    Vector3::new(bbox.min.x, bbox.min.y, bbox.max.z),
-                    Vector3::new(bbox.max.x, bbox.min.y, bbox.max.z),
-                    Vector3::new(bbox.min.x, bbox.max.y, bbox.max.z),
-                    Vector3::new(bbox.max.x, bbox.max.y, bbox.max.z),
-                ];
+                let corners = bbox.corners();
                 let mut new_min = Vector3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
                 let mut new_max = Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
                 for c in &corners {
@@ -420,6 +411,7 @@ impl SdfNode {
                 inner.interval_evaluate(&BBox3::new(new_min, new_max))
             }
             SdfNode::Scale(inner, factor) => {
+                debug_assert!(*factor > 0.0, "Scale factor must be positive");
                 // Scale bbox by 1/factor, evaluate inner, multiply result by factor
                 let inv = 1.0 / factor;
                 let scaled = BBox3::new(bbox.min * inv, bbox.max * inv);
@@ -428,16 +420,7 @@ impl SdfNode {
             SdfNode::Mirror(inner, normal) => {
                 // Mirror is its own inverse. Conservative: evaluate on the
                 // AABB of all 8 reflected corners.
-                let corners = [
-                    Vector3::new(bbox.min.x, bbox.min.y, bbox.min.z),
-                    Vector3::new(bbox.max.x, bbox.min.y, bbox.min.z),
-                    Vector3::new(bbox.min.x, bbox.max.y, bbox.min.z),
-                    Vector3::new(bbox.max.x, bbox.max.y, bbox.min.z),
-                    Vector3::new(bbox.min.x, bbox.min.y, bbox.max.z),
-                    Vector3::new(bbox.max.x, bbox.min.y, bbox.max.z),
-                    Vector3::new(bbox.min.x, bbox.max.y, bbox.max.z),
-                    Vector3::new(bbox.max.x, bbox.max.y, bbox.max.z),
-                ];
+                let corners = bbox.corners();
                 let mut new_min = Vector3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
                 let mut new_max = Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
                 for c in &corners {
@@ -479,16 +462,7 @@ impl SdfNode {
     /// The true range over the box is contained within the range of corner
     /// values (for Lipschitz-1 SDFs), expanded by the diagonal / 2 for safety.
     fn interval_from_corners(&self, bbox: &BBox3) -> Interval {
-        let corners = [
-            Vector3::new(bbox.min.x, bbox.min.y, bbox.min.z),
-            Vector3::new(bbox.max.x, bbox.min.y, bbox.min.z),
-            Vector3::new(bbox.min.x, bbox.max.y, bbox.min.z),
-            Vector3::new(bbox.max.x, bbox.max.y, bbox.min.z),
-            Vector3::new(bbox.min.x, bbox.min.y, bbox.max.z),
-            Vector3::new(bbox.max.x, bbox.min.y, bbox.max.z),
-            Vector3::new(bbox.min.x, bbox.max.y, bbox.max.z),
-            Vector3::new(bbox.max.x, bbox.max.y, bbox.max.z),
-        ];
+        let corners = bbox.corners();
         let mut lo = f64::INFINITY;
         let mut hi = f64::NEG_INFINITY;
         for c in &corners {

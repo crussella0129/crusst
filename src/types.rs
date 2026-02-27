@@ -75,6 +75,21 @@ impl BBox3 {
         p.y >= self.min.y && p.y <= self.max.y &&
         p.z >= self.min.z && p.z <= self.max.z
     }
+    /// Return the 8 corner vertices of this bounding box.
+    pub fn corners(&self) -> [Vector3<f64>; 8] {
+        let mn = self.min;
+        let mx = self.max;
+        [
+            Vector3::new(mn.x, mn.y, mn.z),
+            Vector3::new(mx.x, mn.y, mn.z),
+            Vector3::new(mn.x, mx.y, mn.z),
+            Vector3::new(mx.x, mx.y, mn.z),
+            Vector3::new(mn.x, mn.y, mx.z),
+            Vector3::new(mx.x, mn.y, mx.z),
+            Vector3::new(mn.x, mx.y, mx.z),
+            Vector3::new(mx.x, mx.y, mx.z),
+        ]
+    }
     /// Split into 8 octants.
     pub fn octants(&self) -> [BBox3; 8] {
         let c = self.center();
@@ -101,7 +116,10 @@ pub struct Interval {
 }
 
 impl Interval {
-    pub fn new(lo: f64, hi: f64) -> Self { Self { lo, hi } }
+    pub fn new(lo: f64, hi: f64) -> Self {
+        debug_assert!(lo <= hi, "Interval lo ({lo}) must be <= hi ({hi})");
+        Self { lo, hi }
+    }
     pub fn entire() -> Self { Self { lo: f64::NEG_INFINITY, hi: f64::INFINITY } }
     pub fn definitely_positive(&self) -> bool { self.lo > 0.0 }
     pub fn definitely_negative(&self) -> bool { self.hi < 0.0 }
