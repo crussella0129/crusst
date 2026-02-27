@@ -105,6 +105,74 @@ impl Interval {
     pub fn entire() -> Self { Self { lo: f64::NEG_INFINITY, hi: f64::INFINITY } }
     pub fn definitely_positive(&self) -> bool { self.lo > 0.0 }
     pub fn definitely_negative(&self) -> bool { self.hi < 0.0 }
+
+    // -- Interval-interval arithmetic --
+
+    pub fn add(self, other: Interval) -> Interval {
+        Interval::new(self.lo + other.lo, self.hi + other.hi)
+    }
+    pub fn sub(self, other: Interval) -> Interval {
+        Interval::new(self.lo - other.hi, self.hi - other.lo)
+    }
+    pub fn mul(self, other: Interval) -> Interval {
+        let a = self.lo * other.lo;
+        let b = self.lo * other.hi;
+        let c = self.hi * other.lo;
+        let d = self.hi * other.hi;
+        Interval::new(a.min(b).min(c).min(d), a.max(b).max(c).max(d))
+    }
+    pub fn union(self, other: Interval) -> Interval {
+        Interval::new(self.lo.min(other.lo), self.hi.max(other.hi))
+    }
+
+    // -- Unary operations --
+
+    pub fn abs(self) -> Interval {
+        if self.lo >= 0.0 {
+            self
+        } else if self.hi <= 0.0 {
+            Interval::new(-self.hi, -self.lo)
+        } else {
+            Interval::new(0.0, self.lo.abs().max(self.hi))
+        }
+    }
+    pub fn sqrt(self) -> Interval {
+        Interval::new(self.lo.max(0.0).sqrt(), self.hi.max(0.0).sqrt())
+    }
+    pub fn neg(self) -> Interval {
+        Interval::new(-self.hi, -self.lo)
+    }
+
+    // -- Interval min/max --
+
+    pub fn max(self, other: Interval) -> Interval {
+        Interval::new(self.lo.max(other.lo), self.hi.max(other.hi))
+    }
+    pub fn min(self, other: Interval) -> Interval {
+        Interval::new(self.lo.min(other.lo), self.hi.min(other.hi))
+    }
+
+    // -- Scalar operations --
+
+    pub fn scalar_add(self, s: f64) -> Interval {
+        Interval::new(self.lo + s, self.hi + s)
+    }
+    pub fn scalar_sub(self, s: f64) -> Interval {
+        Interval::new(self.lo - s, self.hi - s)
+    }
+    pub fn scalar_mul(self, s: f64) -> Interval {
+        if s >= 0.0 {
+            Interval::new(self.lo * s, self.hi * s)
+        } else {
+            Interval::new(self.hi * s, self.lo * s)
+        }
+    }
+
+    // -- Predicates --
+
+    pub fn contains_zero(&self) -> bool {
+        self.lo <= 0.0 && self.hi >= 0.0
+    }
 }
 
 /// Settings controlling adaptive mesh extraction.

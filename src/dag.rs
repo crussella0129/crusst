@@ -9,6 +9,7 @@
 use std::sync::Arc;
 use nalgebra::{Rotation3, Vector2, Vector3};
 use crate::{csg, primitives};
+use crate::types::{BBox3, Interval};
 
 // ---------------------------------------------------------------------------
 // SdfNode2d — 2D profile sub-enum (for Revolve / Extrude)
@@ -268,5 +269,235 @@ impl SdfNode {
                 sdf.evaluate(point)
             }
         }
+    }
+
+    /// Evaluate a conservative interval bound of the SDF over an axis-aligned
+    /// bounding box. The returned interval is guaranteed to contain every
+    /// value that `evaluate(p)` can take for any `p` inside `bbox`.
+    ///
+    /// The interval may be wider than the true range (less pruning), but is
+    /// **never narrower** (would miss surface crossings).
+    pub fn interval_evaluate(&self, bbox: &BBox3) -> Interval {
+        match self {
+            // -- Primitives ------------------------------------------------
+
+            SdfNode::Sphere { center, radius } => {
+                // Per-axis interval of (p - center)
+                let x_iv = Interval::new(bbox.min.x - center.x, bbox.max.x - center.x);
+                let y_iv = Interval::new(bbox.min.y - center.y, bbox.max.y - center.y);
+                let z_iv = Interval::new(bbox.min.z - center.z, bbox.max.z - center.z);
+                // |p - center|^2 = x^2 + y^2 + z^2 (interval of each squared, summed)
+                let dist_sq = x_iv.mul(x_iv).add(y_iv.mul(y_iv)).add(z_iv.mul(z_iv));
+                // |p - center| = sqrt of that, then subtract radius
+                dist_sq.sqrt().scalar_sub(*radius)
+            }
+
+            SdfNode::Box3 { center, half_extents } => {
+                // sdf_box: d_i = |p_i - center_i| - half_i
+                // outside = norm(max(d, 0)), inside = max(d_x, d_y, d_z).min(0)
+                // result = outside + inside
+                //
+                // Conservative: compute interval of each d_i, then bound.
+                let x_iv = Interval::new(bbox.min.x - center.x, bbox.max.x - center.x)
+                    .abs()
+                    .scalar_sub(half_extents.x);
+                let y_iv = Interval::new(bbox.min.y - center.y, bbox.max.y - center.y)
+                    .abs()
+                    .scalar_sub(half_extents.y);
+                let z_iv = Interval::new(bbox.min.z - center.z, bbox.max.z - center.z)
+                    .abs()
+                    .scalar_sub(half_extents.z);
+
+                // Outside distance: norm of max(d, 0) per axis
+                let x_clamped = Interval::new(x_iv.lo.max(0.0), x_iv.hi.max(0.0));
+                let y_clamped = Interval::new(y_iv.lo.max(0.0), y_iv.hi.max(0.0));
+                let z_clamped = Interval::new(z_iv.lo.max(0.0), z_iv.hi.max(0.0));
+                let outside_sq = x_clamped.mul(x_clamped)
+                    .add(y_clamped.mul(y_clamped))
+                    .add(z_clamped.mul(z_clamped));
+                let outside_iv = outside_sq.sqrt();
+
+                // Inside distance: min(max(d_x, d_y, d_z), 0)
+                let max_d = x_iv.max(y_iv).max(z_iv);
+                let inside_iv = Interval::new(max_d.lo.min(0.0), max_d.hi.min(0.0));
+
+                outside_iv.add(inside_iv)
+            }
+
+            SdfNode::HalfSpace { normal, d } => {
+                // normal.dot(p) + d
+                let x_iv = Interval::new(bbox.min.x, bbox.max.x).scalar_mul(normal.x);
+                let y_iv = Interval::new(bbox.min.y, bbox.max.y).scalar_mul(normal.y);
+                let z_iv = Interval::new(bbox.min.z, bbox.max.z).scalar_mul(normal.z);
+                x_iv.add(y_iv).add(z_iv).scalar_add(*d)
+            }
+
+            // For complex primitives, use a conservative bounding approach:
+            // evaluate all 8 corners and expand slightly for safety.
+            SdfNode::Cylinder { .. }
+            | SdfNode::CappedCone { .. }
+            | SdfNode::Torus { .. }
+            | SdfNode::RoundedBox { .. }
+            | SdfNode::Capsule { .. }
+            | SdfNode::Ellipsoid { .. }
+            | SdfNode::RoundedCylinder { .. } => {
+                self.interval_from_corners(bbox)
+            }
+
+            // -- CSG -------------------------------------------------------
+
+            SdfNode::Union(a, b) => {
+                let a_iv = a.interval_evaluate(bbox);
+                let b_iv = b.interval_evaluate(bbox);
+                a_iv.min(b_iv)
+            }
+            SdfNode::Intersection(a, b) => {
+                let a_iv = a.interval_evaluate(bbox);
+                let b_iv = b.interval_evaluate(bbox);
+                a_iv.max(b_iv)
+            }
+            SdfNode::Difference(a, b) => {
+                let a_iv = a.interval_evaluate(bbox);
+                let b_iv = b.interval_evaluate(bbox);
+                a_iv.max(b_iv.neg())
+            }
+
+            // Smooth CSG: start from sharp bounds, then widen by the maximum
+            // smooth deviation (k/4) to stay conservative.
+            SdfNode::SmoothUnion(a, b, k) => {
+                let a_iv = a.interval_evaluate(bbox);
+                let b_iv = b.interval_evaluate(bbox);
+                // Smooth union <= sharp union, so lo can be lower by up to k/4
+                let sharp = a_iv.min(b_iv);
+                Interval::new(sharp.lo - k * 0.25, sharp.hi)
+            }
+            SdfNode::SmoothIntersection(a, b, k) => {
+                let a_iv = a.interval_evaluate(bbox);
+                let b_iv = b.interval_evaluate(bbox);
+                // Smooth intersection >= sharp intersection, so hi can be higher by up to k/4
+                let sharp = a_iv.max(b_iv);
+                Interval::new(sharp.lo, sharp.hi + k * 0.25)
+            }
+            SdfNode::SmoothDifference(a, b, k) => {
+                let a_iv = a.interval_evaluate(bbox);
+                let b_iv = b.interval_evaluate(bbox);
+                // Smooth difference: similar to smooth intersection of a and -b
+                let sharp = a_iv.max(b_iv.neg());
+                Interval::new(sharp.lo, sharp.hi + k * 0.25)
+            }
+
+            // -- Transforms ------------------------------------------------
+
+            SdfNode::Translate(inner, offset) => {
+                // Shift bbox by -offset, evaluate inner
+                let shifted = BBox3::new(bbox.min - offset, bbox.max - offset);
+                inner.interval_evaluate(&shifted)
+            }
+            SdfNode::Rotate(inner, rotation) => {
+                // Conservative: compute AABB of the inverse-rotated bbox corners
+                let inv = rotation.inverse();
+                let corners = [
+                    Vector3::new(bbox.min.x, bbox.min.y, bbox.min.z),
+                    Vector3::new(bbox.max.x, bbox.min.y, bbox.min.z),
+                    Vector3::new(bbox.min.x, bbox.max.y, bbox.min.z),
+                    Vector3::new(bbox.max.x, bbox.max.y, bbox.min.z),
+                    Vector3::new(bbox.min.x, bbox.min.y, bbox.max.z),
+                    Vector3::new(bbox.max.x, bbox.min.y, bbox.max.z),
+                    Vector3::new(bbox.min.x, bbox.max.y, bbox.max.z),
+                    Vector3::new(bbox.max.x, bbox.max.y, bbox.max.z),
+                ];
+                let mut new_min = Vector3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+                let mut new_max = Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+                for c in &corners {
+                    let rc = inv * c;
+                    new_min.x = new_min.x.min(rc.x);
+                    new_min.y = new_min.y.min(rc.y);
+                    new_min.z = new_min.z.min(rc.z);
+                    new_max.x = new_max.x.max(rc.x);
+                    new_max.y = new_max.y.max(rc.y);
+                    new_max.z = new_max.z.max(rc.z);
+                }
+                inner.interval_evaluate(&BBox3::new(new_min, new_max))
+            }
+            SdfNode::Scale(inner, factor) => {
+                // Scale bbox by 1/factor, evaluate inner, multiply result by factor
+                let inv = 1.0 / factor;
+                let scaled = BBox3::new(bbox.min * inv, bbox.max * inv);
+                inner.interval_evaluate(&scaled).scalar_mul(*factor)
+            }
+            SdfNode::Mirror(inner, normal) => {
+                // Mirror is its own inverse. Conservative: evaluate on the
+                // AABB of all 8 reflected corners.
+                let corners = [
+                    Vector3::new(bbox.min.x, bbox.min.y, bbox.min.z),
+                    Vector3::new(bbox.max.x, bbox.min.y, bbox.min.z),
+                    Vector3::new(bbox.min.x, bbox.max.y, bbox.min.z),
+                    Vector3::new(bbox.max.x, bbox.max.y, bbox.min.z),
+                    Vector3::new(bbox.min.x, bbox.min.y, bbox.max.z),
+                    Vector3::new(bbox.max.x, bbox.min.y, bbox.max.z),
+                    Vector3::new(bbox.min.x, bbox.max.y, bbox.max.z),
+                    Vector3::new(bbox.max.x, bbox.max.y, bbox.max.z),
+                ];
+                let mut new_min = Vector3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+                let mut new_max = Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+                for c in &corners {
+                    let d = c.dot(normal);
+                    let reflected = c - normal * (2.0 * d.min(0.0));
+                    new_min.x = new_min.x.min(reflected.x);
+                    new_min.y = new_min.y.min(reflected.y);
+                    new_min.z = new_min.z.min(reflected.z);
+                    new_max.x = new_max.x.max(reflected.x);
+                    new_max.y = new_max.y.max(reflected.y);
+                    new_max.z = new_max.z.max(reflected.z);
+                }
+                inner.interval_evaluate(&BBox3::new(new_min, new_max))
+            }
+            SdfNode::Shell(inner, thickness) => {
+                // |inner(p)| - thickness
+                inner.interval_evaluate(bbox).abs().scalar_sub(*thickness)
+            }
+            SdfNode::Round(inner, radius) => {
+                // inner(p) - radius
+                inner.interval_evaluate(bbox).scalar_sub(*radius)
+            }
+
+            // -- 2D -> 3D --------------------------------------------------
+
+            SdfNode::Revolve(_) | SdfNode::Extrude(_, _) => {
+                Interval::entire()
+            }
+
+            // -- Opaque ----------------------------------------------------
+
+            SdfNode::Custom(_) => {
+                Interval::entire()
+            }
+        }
+    }
+
+    /// Conservative interval from evaluating all 8 corners of the bbox.
+    /// The true range over the box is contained within the range of corner
+    /// values (for Lipschitz-1 SDFs), expanded by the diagonal / 2 for safety.
+    fn interval_from_corners(&self, bbox: &BBox3) -> Interval {
+        let corners = [
+            Vector3::new(bbox.min.x, bbox.min.y, bbox.min.z),
+            Vector3::new(bbox.max.x, bbox.min.y, bbox.min.z),
+            Vector3::new(bbox.min.x, bbox.max.y, bbox.min.z),
+            Vector3::new(bbox.max.x, bbox.max.y, bbox.min.z),
+            Vector3::new(bbox.min.x, bbox.min.y, bbox.max.z),
+            Vector3::new(bbox.max.x, bbox.min.y, bbox.max.z),
+            Vector3::new(bbox.min.x, bbox.max.y, bbox.max.z),
+            Vector3::new(bbox.max.x, bbox.max.y, bbox.max.z),
+        ];
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        for c in &corners {
+            let v = self.evaluate(*c);
+            lo = lo.min(v);
+            hi = hi.max(v);
+        }
+        // Expand by half-diagonal to be conservative (Lipschitz bound)
+        let half_diag = (bbox.max - bbox.min).norm() * 0.5;
+        Interval::new(lo - half_diag, hi + half_diag)
     }
 }
