@@ -458,6 +458,124 @@ impl SdfNode {
         }
     }
 
+    /// Compute the analytical gradient (surface normal direction) at a point.
+    ///
+    /// The gradient of an SDF gives the direction of steepest increase.
+    /// For a point on the surface, this is the outward normal. The returned
+    /// vector is normalized to unit length for use in QEF solvers.
+    pub fn gradient(&self, point: Vector3<f64>) -> Vector3<f64> {
+        match self {
+            // -- Primitives ------------------------------------------------
+
+            SdfNode::Sphere { center, .. } => {
+                let d = point - center;
+                let len = d.norm();
+                if len > 1e-10 { d / len } else { Vector3::new(0.0, 1.0, 0.0) }
+            }
+
+            SdfNode::HalfSpace { normal, .. } => {
+                *normal
+            }
+
+            // Complex primitives: central differences fallback
+            SdfNode::Box3 { .. }
+            | SdfNode::Cylinder { .. }
+            | SdfNode::CappedCone { .. }
+            | SdfNode::Torus { .. }
+            | SdfNode::RoundedBox { .. }
+            | SdfNode::Capsule { .. }
+            | SdfNode::Ellipsoid { .. }
+            | SdfNode::RoundedCylinder { .. } => {
+                central_diff_gradient(self, point)
+            }
+
+            // -- CSG -------------------------------------------------------
+
+            SdfNode::Union(a, b) => {
+                if a.evaluate(point) <= b.evaluate(point) {
+                    a.gradient(point)
+                } else {
+                    b.gradient(point)
+                }
+            }
+            SdfNode::Intersection(a, b) => {
+                if a.evaluate(point) >= b.evaluate(point) {
+                    a.gradient(point)
+                } else {
+                    b.gradient(point)
+                }
+            }
+            SdfNode::Difference(a, b) => {
+                let da = a.evaluate(point);
+                let db_neg = -b.evaluate(point);
+                if da > db_neg {
+                    a.gradient(point)
+                } else {
+                    -b.gradient(point)
+                }
+            }
+
+            // Smooth CSG: central differences (blending makes analytical complex)
+            SdfNode::SmoothUnion(_, _, _)
+            | SdfNode::SmoothIntersection(_, _, _)
+            | SdfNode::SmoothDifference(_, _, _) => {
+                central_diff_gradient(self, point)
+            }
+
+            // -- Transforms ------------------------------------------------
+
+            SdfNode::Translate(inner, offset) => {
+                inner.gradient(point - offset)
+            }
+            SdfNode::Rotate(inner, rotation) => {
+                let local_grad = inner.gradient(rotation.inverse() * point);
+                let g = rotation * local_grad;
+                let len = g.norm();
+                if len > 1e-10 { g / len } else { Vector3::new(0.0, 1.0, 0.0) }
+            }
+            SdfNode::Scale(inner, factor) => {
+                let g = inner.gradient(point / *factor);
+                let len = g.norm();
+                if len > 1e-10 { g / len } else { Vector3::new(0.0, 1.0, 0.0) }
+            }
+            SdfNode::Mirror(inner, normal) => {
+                let d = point.dot(normal);
+                let reflected = point - normal * (2.0 * d.min(0.0));
+                let g = inner.gradient(reflected);
+                if d < 0.0 {
+                    // Reflect gradient back through the mirror plane
+                    let g_ref = g - normal * (2.0 * g.dot(normal));
+                    let len = g_ref.norm();
+                    if len > 1e-10 { g_ref / len } else { Vector3::new(0.0, 1.0, 0.0) }
+                } else {
+                    g
+                }
+            }
+            SdfNode::Shell(inner, _thickness) => {
+                if inner.evaluate(point) >= 0.0 {
+                    inner.gradient(point)
+                } else {
+                    -inner.gradient(point)
+                }
+            }
+            SdfNode::Round(inner, _radius) => {
+                inner.gradient(point)
+            }
+
+            // -- 2D -> 3D --------------------------------------------------
+
+            SdfNode::Revolve(_) | SdfNode::Extrude(_, _) => {
+                central_diff_gradient(self, point)
+            }
+
+            // -- Opaque ----------------------------------------------------
+
+            SdfNode::Custom(_) => {
+                central_diff_gradient(self, point)
+            }
+        }
+    }
+
     /// Conservative interval from evaluating all 8 corners of the bbox.
     /// The true range over the box is contained within the range of corner
     /// values (for Lipschitz-1 SDFs), expanded by the diagonal / 2 for safety.
@@ -474,4 +592,26 @@ impl SdfNode {
         let half_diag = (bbox.max - bbox.min).norm() * 0.5;
         Interval::new(lo - half_diag, hi + half_diag)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Central differences fallback for gradient computation
+// ---------------------------------------------------------------------------
+
+/// Compute the gradient via central finite differences.
+///
+/// Used for complex primitives (Box3, Cylinder, etc.), smooth CSG, 2D->3D
+/// operations, and opaque Custom nodes where analytical gradients are either
+/// impractical or error-prone.
+fn central_diff_gradient(node: &SdfNode, point: Vector3<f64>) -> Vector3<f64> {
+    let eps = 1e-6;
+    let dx = node.evaluate(point + Vector3::new(eps, 0.0, 0.0))
+           - node.evaluate(point - Vector3::new(eps, 0.0, 0.0));
+    let dy = node.evaluate(point + Vector3::new(0.0, eps, 0.0))
+           - node.evaluate(point - Vector3::new(0.0, eps, 0.0));
+    let dz = node.evaluate(point + Vector3::new(0.0, 0.0, eps))
+           - node.evaluate(point - Vector3::new(0.0, 0.0, eps));
+    let g = Vector3::new(dx, dy, dz);
+    let len = g.norm();
+    if len > 1e-10 { g / len } else { Vector3::new(0.0, 1.0, 0.0) }
 }

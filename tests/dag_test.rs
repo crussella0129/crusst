@@ -1,6 +1,7 @@
 use crusst::dag::SdfNode;
 use crusst::types::BBox3;
 use nalgebra::Vector3;
+#[allow(unused_imports)]
 use std::sync::Arc;
 
 #[test]
@@ -75,4 +76,42 @@ fn interval_union_prunes_correctly() {
     let bbox = BBox3::new(Vector3::new(-22.0, -1.0, -1.0), Vector3::new(-18.0, 1.0, 1.0));
     let iv = u.interval_evaluate(&bbox);
     assert!(!iv.definitely_positive());
+}
+
+// ---------------------------------------------------------------------------
+// Gradient tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gradient_sphere_points_outward() {
+    let node = SdfNode::Sphere { center: Vector3::zeros(), radius: 5.0 };
+    let g = node.gradient(Vector3::new(5.0, 0.0, 0.0));
+    assert!((g.x - 1.0).abs() < 1e-6);
+    assert!(g.y.abs() < 1e-6);
+    assert!(g.z.abs() < 1e-6);
+}
+
+#[test]
+fn gradient_sphere_is_unit_length() {
+    let node = SdfNode::Sphere { center: Vector3::zeros(), radius: 5.0 };
+    let g = node.gradient(Vector3::new(3.0, 4.0, 0.0));
+    assert!((g.norm() - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn gradient_box_on_face_is_normal() {
+    let node = SdfNode::Box3 {
+        center: Vector3::zeros(),
+        half_extents: Vector3::new(5.0, 5.0, 5.0),
+    };
+    let g = node.gradient(Vector3::new(5.0, 0.0, 0.0));
+    assert!((g.x - 1.0).abs() < 1e-4);
+}
+
+#[test]
+fn gradient_translate_unchanged() {
+    let s = Arc::new(SdfNode::Sphere { center: Vector3::zeros(), radius: 5.0 });
+    let t = SdfNode::Translate(s, Vector3::new(10.0, 0.0, 0.0));
+    let g = t.gradient(Vector3::new(15.0, 0.0, 0.0));
+    assert!((g.x - 1.0).abs() < 1e-6);
 }
