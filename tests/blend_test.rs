@@ -1,5 +1,8 @@
 use approx::assert_relative_eq;
-use crusst::blend::{blend_difference, blend_intersection, blend_union, equal_chamfer, g1, g2};
+use crusst::blend::{
+    angle_chamfer, blend_difference, blend_intersection, blend_union, chord, cycloidal,
+    equal_chamfer, g1, g2, g3, hyperbolic, parabolic, two_dist_chamfer,
+};
 
 // ---------------------------------------------------------------------------
 // G2 circular arc
@@ -138,4 +141,138 @@ fn blend_union_symmetry() {
     let diff = blend_difference(d1, d2, &profile);
     let i2 = blend_intersection(d1, -d2, &profile);
     assert_relative_eq!(diff, i2, epsilon = 1e-12);
+}
+
+// ---------------------------------------------------------------------------
+// G3 quintic smoothstep (Newton iteration)
+// ---------------------------------------------------------------------------
+
+/// G3 blend at the tangent point on face 1: (d1, d2) = (-r, 0).
+/// The quintic curve starts here, so SDF should be ~0.
+#[test]
+fn g3_tangent_d1() {
+    let r = 1.0;
+    let profile = g3(r);
+    let result = blend_intersection(-r, 0.0, &profile);
+    assert_relative_eq!(result, 0.0, epsilon = 1e-4);
+}
+
+/// G3 blend at the tangent point on face 2: (d1, d2) = (0, -r).
+/// The quintic curve ends here, so SDF should be ~0.
+#[test]
+fn g3_tangent_d2() {
+    let r = 1.0;
+    let profile = g3(r);
+    let result = blend_intersection(0.0, -r, &profile);
+    assert_relative_eq!(result, 0.0, epsilon = 1e-4);
+}
+
+// ---------------------------------------------------------------------------
+// Two-distance chamfer (closed-form)
+// ---------------------------------------------------------------------------
+
+/// TwoDistChamfer at the tangent point on face 1: (d1, d2) = (-k1, 0).
+/// The chamfer line meets face 1 here, so SDF = 0.
+#[test]
+fn two_dist_chamfer_tangent_d1() {
+    let k1 = 2.0;
+    let k2 = 1.0;
+    let profile = two_dist_chamfer(k1, k2);
+    let result = blend_intersection(-k1, 0.0, &profile);
+    assert_relative_eq!(result, 0.0, epsilon = 1e-6);
+}
+
+/// TwoDistChamfer at the tangent point on face 2: (d1, d2) = (0, -k2).
+/// The chamfer line meets face 2 here, so SDF = 0.
+#[test]
+fn two_dist_chamfer_tangent_d2() {
+    let k1 = 2.0;
+    let k2 = 1.0;
+    let profile = two_dist_chamfer(k1, k2);
+    let result = blend_intersection(0.0, -k2, &profile);
+    assert_relative_eq!(result, 0.0, epsilon = 1e-6);
+}
+
+// ---------------------------------------------------------------------------
+// Angle chamfer (delegates to two-distance)
+// ---------------------------------------------------------------------------
+
+/// AngleChamfer at the tangent point on face 1: (d1, d2) = (-d, 0).
+/// The chamfer line meets face 1 here, so SDF = 0.
+#[test]
+fn angle_chamfer_tangent_d1() {
+    let d = 1.0;
+    let angle = std::f64::consts::FRAC_PI_4; // 45 degrees => k2 = d * tan(45) = d
+    let profile = angle_chamfer(d, angle);
+    let result = blend_intersection(-d, 0.0, &profile);
+    assert_relative_eq!(result, 0.0, epsilon = 1e-6);
+}
+
+// ---------------------------------------------------------------------------
+// Parabolic blend (Newton iteration)
+// ---------------------------------------------------------------------------
+
+/// Parabolic blend at the tangent point on face 1: (d1, d2) = (-r, 0).
+/// The parabola starts here, so SDF should be ~0.
+#[test]
+fn parabolic_tangent_d1() {
+    let r = 1.0;
+    let profile = parabolic(r);
+    let result = blend_intersection(-r, 0.0, &profile);
+    assert_relative_eq!(result, 0.0, epsilon = 1e-4);
+}
+
+/// Parabolic blend at the tangent point on face 2: (d1, d2) = (0, -r).
+/// The parabola ends here, so SDF should be ~0.
+#[test]
+fn parabolic_tangent_d2() {
+    let r = 1.0;
+    let profile = parabolic(r);
+    let result = blend_intersection(0.0, -r, &profile);
+    assert_relative_eq!(result, 0.0, epsilon = 1e-4);
+}
+
+// ---------------------------------------------------------------------------
+// Cycloidal blend (Newton iteration)
+// ---------------------------------------------------------------------------
+
+/// Cycloidal blend at the tangent point on face 1: (d1, d2) = (-r, 0).
+/// The cycloid starts here, so SDF should be ~0.
+#[test]
+fn cycloidal_tangent_d1() {
+    let r = 1.0;
+    let profile = cycloidal(r);
+    let result = blend_intersection(-r, 0.0, &profile);
+    assert_relative_eq!(result, 0.0, epsilon = 1e-4);
+}
+
+// ---------------------------------------------------------------------------
+// Hyperbolic blend (Newton iteration)
+// ---------------------------------------------------------------------------
+
+/// Hyperbolic blend at the tangent point on face 1: (d1, d2) = (-r, 0).
+/// The curve starts here, so SDF should be ~0.
+#[test]
+fn hyperbolic_tangent_d1() {
+    let r = 1.0;
+    let a = 0.5; // asymptote parameter
+    let profile = hyperbolic(r, a);
+    let result = blend_intersection(-r, 0.0, &profile);
+    assert_relative_eq!(result, 0.0, epsilon = 1e-4);
+}
+
+// ---------------------------------------------------------------------------
+// Chord blend (delegates to G2)
+// ---------------------------------------------------------------------------
+
+/// Chord blend at the tangent point on face 1.
+/// Chord delegates to G2 with r = chord_length / sqrt(2),
+/// so at d1 = -r the SDF should be ~0.
+#[test]
+fn chord_tangent_d1() {
+    let cl = 2.0;
+    let r = cl / std::f64::consts::SQRT_2;
+    let profile = chord(cl);
+    let result = blend_intersection(-r, 0.0, &profile);
+    assert_relative_eq!(result, 0.0, epsilon = 1e-6);
 }
