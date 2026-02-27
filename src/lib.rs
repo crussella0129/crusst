@@ -1,3 +1,4 @@
+pub mod blend;
 pub mod builder;
 pub mod csg;
 pub mod dag;
