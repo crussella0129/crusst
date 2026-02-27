@@ -1,6 +1,7 @@
 pub mod primitives;
 pub mod csg;
 pub mod shape;
+pub mod types;
 pub mod mesh;
 pub mod path;
 pub mod frame;

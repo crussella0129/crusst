@@ -13,12 +13,11 @@ mint = ["nalgebra/convert-mint"]
 [dependencies]
 nalgebra = "0.33"
 rayon = "1.10"
-isosurface = "0.1.0-alpha.0"
-tiny_http = "0.12"
 
 [dev-dependencies]
 approx = "0.5"
+tiny_http = "0.12"
 
-[[bin]]
+[[example]]
 name = "viewer"
-path = "src/bin/viewer.rs"
+path = "examples/viewer.rs"

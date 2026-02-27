@@ -65,7 +65,6 @@ name = "crusst"
 version = "0.1.0"
 dependencies = [
  "approx",
- "isosurface",
  "nalgebra",
  "rayon",
  "tiny_http",
@@ -82,12 +81,6 @@ name = "httpdate"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
-
-[[package]]
-name = "isosurface"
-version = "0.1.0-alpha.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f0f4b60411e179d54d05e856a1bbd799eb19b65e7339704bf970ff0b4b4b49e"
 
 [[package]]
 name = "log"
