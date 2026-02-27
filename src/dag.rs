@@ -147,6 +147,24 @@ pub enum SdfNode {
     /// Smooth difference with blending radius `k`.
     SmoothDifference(Arc<SdfNode>, Arc<SdfNode>, f64),
 
+    /// Round union with fillet radius `r`.
+    RoundUnion(Arc<SdfNode>, Arc<SdfNode>, f64),
+
+    /// Round intersection with fillet radius `r`.
+    RoundIntersection(Arc<SdfNode>, Arc<SdfNode>, f64),
+
+    /// Round difference with fillet radius `r`.
+    RoundDifference(Arc<SdfNode>, Arc<SdfNode>, f64),
+
+    /// Chamfer union with chamfer size `k`.
+    ChamferUnion(Arc<SdfNode>, Arc<SdfNode>, f64),
+
+    /// Chamfer intersection with chamfer size `k`.
+    ChamferIntersection(Arc<SdfNode>, Arc<SdfNode>, f64),
+
+    /// Chamfer difference with chamfer size `k`.
+    ChamferDifference(Arc<SdfNode>, Arc<SdfNode>, f64),
+
     // -- Transforms (6) ----------------------------------------------------
     /// Translate by an offset vector.
     Translate(Arc<SdfNode>, Vector3<f64>),
@@ -249,6 +267,24 @@ impl SdfNode {
             }
             SdfNode::SmoothDifference(a, b, k) => {
                 csg::smooth_difference(a.evaluate(point), b.evaluate(point), *k)
+            }
+            SdfNode::RoundUnion(a, b, r) => {
+                csg::round_union(a.evaluate(point), b.evaluate(point), *r)
+            }
+            SdfNode::RoundIntersection(a, b, r) => {
+                csg::round_intersection(a.evaluate(point), b.evaluate(point), *r)
+            }
+            SdfNode::RoundDifference(a, b, r) => {
+                csg::round_difference(a.evaluate(point), b.evaluate(point), *r)
+            }
+            SdfNode::ChamferUnion(a, b, k) => {
+                csg::chamfer_union(a.evaluate(point), b.evaluate(point), *k)
+            }
+            SdfNode::ChamferIntersection(a, b, k) => {
+                csg::chamfer_intersection(a.evaluate(point), b.evaluate(point), *k)
+            }
+            SdfNode::ChamferDifference(a, b, k) => {
+                csg::chamfer_difference(a.evaluate(point), b.evaluate(point), *k)
             }
 
             // -- Transforms ------------------------------------------------
@@ -402,6 +438,42 @@ impl SdfNode {
                 let sharp = a_iv.max(b_iv.neg());
                 Interval::new(sharp.lo, sharp.hi + k * 0.25)
             }
+            SdfNode::RoundUnion(a, b, r) => {
+                let a_iv = a.interval_evaluate(bbox);
+                let b_iv = b.interval_evaluate(bbox);
+                let sharp = a_iv.min(b_iv);
+                Interval::new(sharp.lo - r, sharp.hi)
+            }
+            SdfNode::RoundIntersection(a, b, r) => {
+                let a_iv = a.interval_evaluate(bbox);
+                let b_iv = b.interval_evaluate(bbox);
+                let sharp = a_iv.max(b_iv);
+                Interval::new(sharp.lo, sharp.hi + r)
+            }
+            SdfNode::RoundDifference(a, b, r) => {
+                let a_iv = a.interval_evaluate(bbox);
+                let b_iv = b.interval_evaluate(bbox);
+                let sharp = a_iv.max(b_iv.neg());
+                Interval::new(sharp.lo, sharp.hi + r)
+            }
+            SdfNode::ChamferUnion(a, b, k) => {
+                let a_iv = a.interval_evaluate(bbox);
+                let b_iv = b.interval_evaluate(bbox);
+                let sharp = a_iv.min(b_iv);
+                Interval::new(sharp.lo - k * 0.3, sharp.hi)
+            }
+            SdfNode::ChamferIntersection(a, b, k) => {
+                let a_iv = a.interval_evaluate(bbox);
+                let b_iv = b.interval_evaluate(bbox);
+                let sharp = a_iv.max(b_iv);
+                Interval::new(sharp.lo, sharp.hi + k * 0.3)
+            }
+            SdfNode::ChamferDifference(a, b, k) => {
+                let a_iv = a.interval_evaluate(bbox);
+                let b_iv = b.interval_evaluate(bbox);
+                let sharp = a_iv.max(b_iv.neg());
+                Interval::new(sharp.lo, sharp.hi + k * 0.3)
+            }
 
             // -- Transforms ------------------------------------------------
             SdfNode::Translate(inner, offset) => {
@@ -525,10 +597,16 @@ impl SdfNode {
                 }
             }
 
-            // Smooth CSG: central differences (blending makes analytical complex)
+            // Smooth/round/chamfer CSG: central differences (blending makes analytical complex)
             SdfNode::SmoothUnion(_, _, _)
             | SdfNode::SmoothIntersection(_, _, _)
-            | SdfNode::SmoothDifference(_, _, _) => central_diff_gradient(self, point),
+            | SdfNode::SmoothDifference(_, _, _)
+            | SdfNode::RoundUnion(_, _, _)
+            | SdfNode::RoundIntersection(_, _, _)
+            | SdfNode::RoundDifference(_, _, _)
+            | SdfNode::ChamferUnion(_, _, _)
+            | SdfNode::ChamferIntersection(_, _, _)
+            | SdfNode::ChamferDifference(_, _, _) => central_diff_gradient(self, point),
 
             // -- Transforms ------------------------------------------------
             SdfNode::Translate(inner, offset) => inner.gradient(point - offset),

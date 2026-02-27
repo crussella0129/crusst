@@ -183,6 +183,48 @@ impl Shape {
             node: Arc::new(SdfNode::SmoothDifference(self.node, other.node, k)),
         }
     }
+
+    /// Round union (circular fillet) with radius `r`.
+    pub fn round_union(self, other: Shape, r: f64) -> Self {
+        Self {
+            node: Arc::new(SdfNode::RoundUnion(self.node, other.node, r)),
+        }
+    }
+
+    /// Round intersection (circular fillet) with radius `r`.
+    pub fn round_intersect(self, other: Shape, r: f64) -> Self {
+        Self {
+            node: Arc::new(SdfNode::RoundIntersection(self.node, other.node, r)),
+        }
+    }
+
+    /// Round subtraction (circular fillet) with radius `r`.
+    pub fn round_subtract(self, other: Shape, r: f64) -> Self {
+        Self {
+            node: Arc::new(SdfNode::RoundDifference(self.node, other.node, r)),
+        }
+    }
+
+    /// Chamfer union with size `k`.
+    pub fn chamfer_union(self, other: Shape, k: f64) -> Self {
+        Self {
+            node: Arc::new(SdfNode::ChamferUnion(self.node, other.node, k)),
+        }
+    }
+
+    /// Chamfer intersection with size `k`.
+    pub fn chamfer_intersect(self, other: Shape, k: f64) -> Self {
+        Self {
+            node: Arc::new(SdfNode::ChamferIntersection(self.node, other.node, k)),
+        }
+    }
+
+    /// Chamfer subtraction with size `k`.
+    pub fn chamfer_subtract(self, other: Shape, k: f64) -> Self {
+        Self {
+            node: Arc::new(SdfNode::ChamferDifference(self.node, other.node, k)),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +301,13 @@ impl Shape {
     pub fn shell(self, thickness: f64) -> Self {
         Self {
             node: Arc::new(SdfNode::Shell(self.node, thickness)),
+        }
+    }
+
+    /// Round all edges with radius `r` (Minkowski offset).
+    pub fn round(self, r: f64) -> Self {
+        Self {
+            node: Arc::new(SdfNode::Round(self.node, r)),
         }
     }
 }
@@ -501,6 +550,90 @@ pub(crate) fn compute_bbox(node: &SdfNode) -> BBox3 {
         }
 
         SdfNode::SmoothDifference(a, _b, k) => {
+            let ba = compute_bbox(a);
+            let ext = Vector3::new(*k, *k, *k);
+            BBox3::new(ba.min - ext, ba.max + ext)
+        }
+
+        SdfNode::RoundUnion(a, b, r) => {
+            let ba = compute_bbox(a);
+            let bb = compute_bbox(b);
+            let ext = Vector3::new(*r, *r, *r);
+            BBox3::new(
+                Vector3::new(
+                    ba.min.x.min(bb.min.x),
+                    ba.min.y.min(bb.min.y),
+                    ba.min.z.min(bb.min.z),
+                ) - ext,
+                Vector3::new(
+                    ba.max.x.max(bb.max.x),
+                    ba.max.y.max(bb.max.y),
+                    ba.max.z.max(bb.max.z),
+                ) + ext,
+            )
+        }
+
+        SdfNode::RoundIntersection(a, b, r) => {
+            let ba = compute_bbox(a);
+            let bb = compute_bbox(b);
+            let ext = Vector3::new(*r, *r, *r);
+            BBox3::new(
+                Vector3::new(
+                    ba.min.x.max(bb.min.x),
+                    ba.min.y.max(bb.min.y),
+                    ba.min.z.max(bb.min.z),
+                ) - ext,
+                Vector3::new(
+                    ba.max.x.min(bb.max.x),
+                    ba.max.y.min(bb.max.y),
+                    ba.max.z.min(bb.max.z),
+                ) + ext,
+            )
+        }
+
+        SdfNode::RoundDifference(a, _b, r) => {
+            let ba = compute_bbox(a);
+            let ext = Vector3::new(*r, *r, *r);
+            BBox3::new(ba.min - ext, ba.max + ext)
+        }
+
+        SdfNode::ChamferUnion(a, b, k) => {
+            let ba = compute_bbox(a);
+            let bb = compute_bbox(b);
+            let ext = Vector3::new(*k, *k, *k);
+            BBox3::new(
+                Vector3::new(
+                    ba.min.x.min(bb.min.x),
+                    ba.min.y.min(bb.min.y),
+                    ba.min.z.min(bb.min.z),
+                ) - ext,
+                Vector3::new(
+                    ba.max.x.max(bb.max.x),
+                    ba.max.y.max(bb.max.y),
+                    ba.max.z.max(bb.max.z),
+                ) + ext,
+            )
+        }
+
+        SdfNode::ChamferIntersection(a, b, k) => {
+            let ba = compute_bbox(a);
+            let bb = compute_bbox(b);
+            let ext = Vector3::new(*k, *k, *k);
+            BBox3::new(
+                Vector3::new(
+                    ba.min.x.max(bb.min.x),
+                    ba.min.y.max(bb.min.y),
+                    ba.min.z.max(bb.min.z),
+                ) - ext,
+                Vector3::new(
+                    ba.max.x.min(bb.max.x),
+                    ba.max.y.min(bb.max.y),
+                    ba.max.z.min(bb.max.z),
+                ) + ext,
+            )
+        }
+
+        SdfNode::ChamferDifference(a, _b, k) => {
             let ba = compute_bbox(a);
             let ext = Vector3::new(*k, *k, *k);
             BBox3::new(ba.min - ext, ba.max + ext)

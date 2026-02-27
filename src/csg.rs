@@ -46,3 +46,39 @@ pub fn smooth_intersection(d1: f64, d2: f64, k: f64) -> f64 {
 pub fn smooth_difference(d1: f64, d2: f64, k: f64) -> f64 {
     smooth_intersection(d1, -d2, k)
 }
+
+/// Round union (inscribed-circle blend) with radius `r`.
+/// Produces an exact circular fillet where two surfaces meet in a union.
+pub fn round_union(d1: f64, d2: f64, r: f64) -> f64 {
+    let u = (r - d1).max(0.0);
+    let v = (r - d2).max(0.0);
+    r.max(d1.min(d2)) - (u * u + v * v).sqrt()
+}
+
+/// Round intersection with radius `r`.
+/// Produces an exact circular fillet in the intersection region.
+pub fn round_intersection(d1: f64, d2: f64, r: f64) -> f64 {
+    let u = (r + d1).max(0.0);
+    let v = (r + d2).max(0.0);
+    (-r).min(d1.max(d2)) + (u * u + v * v).sqrt()
+}
+
+/// Round difference with radius `r`.
+pub fn round_difference(d1: f64, d2: f64, r: f64) -> f64 {
+    round_intersection(d1, -d2, r)
+}
+
+/// Chamfer union with chamfer size `k`.
+pub fn chamfer_union(d1: f64, d2: f64, k: f64) -> f64 {
+    d1.min(d2).min((d1 + d2 - k) / std::f64::consts::SQRT_2)
+}
+
+/// Chamfer intersection with chamfer size `k`.
+pub fn chamfer_intersection(d1: f64, d2: f64, k: f64) -> f64 {
+    d1.max(d2).max((d1 + d2 + k) / std::f64::consts::SQRT_2)
+}
+
+/// Chamfer difference with chamfer size `k`.
+pub fn chamfer_difference(d1: f64, d2: f64, k: f64) -> f64 {
+    chamfer_intersection(d1, -d2, k)
+}
