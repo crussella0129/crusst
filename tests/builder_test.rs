@@ -40,3 +40,24 @@ fn builder_clone_is_cheap() {
     let s2 = s.clone();
     assert!((s.distance(Vector3::zeros()) - s2.distance(Vector3::zeros())).abs() < 1e-15);
 }
+
+#[test]
+fn box_has_six_faces() {
+    let b = Shape::box3(1.0, 1.0, 1.0);
+    let faces = b.faces().expect("box should have faces");
+    assert_eq!(faces.len(), 6);
+}
+
+#[test]
+fn box_has_twelve_edges() {
+    let b = Shape::box3(1.0, 1.0, 1.0);
+    let edges = b.edges().expect("box should have edges");
+    assert_eq!(edges.len(), 12);
+}
+
+#[test]
+fn translated_box_preserves_face_count() {
+    let b = Shape::box3(1.0, 1.0, 1.0).translate(5.0, 0.0, 0.0);
+    let faces = b.faces().expect("translated box should have faces");
+    assert_eq!(faces.len(), 6);
+}

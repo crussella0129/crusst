@@ -17,6 +17,7 @@
 
 use crate::dag::SdfNode;
 use crate::dual_contouring::extract_mesh_adaptive;
+use crate::feature::{EdgeInfo, FaceInfo};
 use crate::types::{BBox3, MeshSettings, TriangleMesh};
 use crate::voxel::VoxelGrid;
 use nalgebra::{Rotation3, Vector3};
@@ -326,6 +327,18 @@ impl Shape {
     /// Returns `true` if `point` is inside the shape (SDF < 0).
     pub fn contains(&self, point: Vector3<f64>) -> bool {
         self.node.evaluate(point) < 0.0
+    }
+
+    /// Get face information for the innermost primitive in this shape.
+    /// Returns None for non-primitive or CSG shapes.
+    pub fn faces(&self) -> Option<Vec<FaceInfo>> {
+        self.node.face_info()
+    }
+
+    /// Get edge information for the innermost primitive in this shape.
+    /// Returns None for non-primitive or CSG shapes.
+    pub fn edges(&self) -> Option<Vec<EdgeInfo>> {
+        self.node.edge_info()
     }
 }
 
