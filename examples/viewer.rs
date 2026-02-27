@@ -4,9 +4,13 @@ use nalgebra::{Vector2, Vector3};
 use std::f64::consts::PI;
 use std::path::PathBuf;
 
+use crusst::blend;
+use crusst::builder::Shape;
+use crusst::feature::ft;
 use crusst::mesh::extract_mesh;
 use crusst::obj_export::write_obj;
 use crusst::shape::*;
+use crusst::types::MeshSettings;
 
 use tiny_http::{Header, Response, Server};
 
@@ -427,7 +431,59 @@ fn generate_models(dir: &PathBuf) {
             mesh.vertices.len()
         );
     }
-    println!("Done — {} models generated.\n", models.len());
+
+    // Fillet / chamfer showcase models (using the builder API)
+    let settings = MeshSettings::default();
+    let builder_models: Vec<(&str, Shape)> = vec![
+        // Box3 with G2 fillet on all edges
+        (
+            "30_filleted_box",
+            Shape::box3(5.0, 5.0, 5.0).fillet(blend::g2(1.0), vec![ft(0, 0).all_edges()]),
+        ),
+        // Box3 with equal chamfer on all edges
+        (
+            "31_chamfered_box",
+            Shape::box3(5.0, 5.0, 5.0)
+                .chamfer(blend::equal_chamfer(1.0), vec![ft(0, 0).all_edges()]),
+        ),
+        // Two spheres with round union
+        (
+            "32_round_union",
+            Shape::sphere(5.0).round_union(Shape::sphere(5.0).translate(7.0, 0.0, 0.0), 1.5),
+        ),
+        // Box minus cylinder with round fillet
+        (
+            "33_round_subtract",
+            Shape::box3(5.0, 5.0, 5.0)
+                .round_subtract(Shape::cylinder(3.0, 15.0).translate(0.0, -2.5, 0.0), 1.0),
+        ),
+        // Box with fillet only on top face edges (+Y edges: 0, 4, 8, 9)
+        (
+            "34_selective_fillet",
+            Shape::box3(5.0, 5.0, 5.0).fillet(blend::g2(1.0), vec![ft(0, 0).edges(&[0, 4, 8, 9])]),
+        ),
+        // Box3 with simple round (Minkowski offset)
+        (
+            "35_rounded_box_simple",
+            Shape::box3(5.0, 5.0, 5.0).round(0.5),
+        ),
+    ];
+
+    let total_models = models.len() + builder_models.len();
+
+    for (name, shape) in &builder_models {
+        print!("  {} ... ", name);
+        let mesh = shape.mesh(settings);
+        let path = dir.join(format!("{}.obj", name));
+        write_obj(&mesh, &path).unwrap();
+        println!(
+            "{} tris, {} verts",
+            mesh.indices.len() / 3,
+            mesh.vertices.len()
+        );
+    }
+
+    println!("Done — {} models generated.\n", total_models);
 }
 
 fn content_type(path: &str) -> &'static str {

@@ -217,6 +217,7 @@ impl Interval {
 }
 
 /// Settings controlling adaptive mesh extraction.
+#[derive(Clone, Copy)]
 pub struct MeshSettings {
     pub max_depth: u8,
     pub min_depth: u8,
