@@ -576,6 +576,7 @@ impl Shape {
     /// The grid covers the shape's bounding box plus one voxel of padding
     /// on each side. Evaluation is parallelized across voxels with rayon.
     pub fn voxelize(&self, voxel_size: f64) -> VoxelGrid {
+        debug_assert!(voxel_size > 0.0, "voxel_size must be positive");
         let bbox = self.bounding_box();
         let pad = Vector3::new(voxel_size, voxel_size, voxel_size);
         let origin = bbox.min - pad;
