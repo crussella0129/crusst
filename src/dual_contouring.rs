@@ -86,6 +86,26 @@ pub fn extract_mesh_adaptive(
     // For each surface leaf cell, enumerate its 12 edges. For each edge with
     // a sign change, register the cell in an edge -> cells map. Then for each
     // edge shared by 3+ cells (or exactly 2 in boundary cases), emit triangles.
+    //
+    // T-junction resolution: In an adaptive octree with 2:1 balance, a large
+    // cell's edge may span what is two half-edges in smaller neighbor cells.
+    // If we register the full edge, it won't match the half-edges, creating
+    // boundary (non-manifold) edges. Fix: collect all leaf corner positions
+    // and split any cell edge whose midpoint coincides with a finer-level
+    // corner.
+    let all_leaves = tree.collect_all_leaves();
+    let mut corner_set: std::collections::HashSet<(i64, i64, i64)> =
+        std::collections::HashSet::new();
+    for leaf in &all_leaves {
+        let cs = leaf.bbox.corners();
+        for c in &cs {
+            let qx = (c.x * QUANT_SCALE).round() as i64;
+            let qy = (c.y * QUANT_SCALE).round() as i64;
+            let qz = (c.z * QUANT_SCALE).round() as i64;
+            corner_set.insert((qx, qy, qz));
+        }
+    }
+
     let mut edge_cells: HashMap<EdgeKey, Vec<(CellKey, &OctreeCell)>> = HashMap::new();
 
     for cell in &surface_cells {
@@ -99,8 +119,30 @@ pub fn extract_mesh_adaptive(
             if (v0 > 0.0) == (v1 > 0.0) {
                 continue;
             }
-            let ek = edge_key(&corners[ci0], &corners[ci1]);
-            edge_cells.entry(ek).or_default().push((key, *cell));
+            // Check if this edge's midpoint is a corner of a finer neighbor.
+            let mid = (corners[ci0] + corners[ci1]) * 0.5;
+            let qmx = (mid.x * QUANT_SCALE).round() as i64;
+            let qmy = (mid.y * QUANT_SCALE).round() as i64;
+            let qmz = (mid.z * QUANT_SCALE).round() as i64;
+
+            if corner_set.contains(&(qmx, qmy, qmz)) {
+                // Edge midpoint is a finer-level corner — split into two
+                // half-edges and register each sub-edge that has a sign change.
+                let vm = node.evaluate(mid);
+                // Sub-edge A -> M
+                if (v0 > 0.0) != (vm > 0.0) {
+                    let ek = edge_key(&corners[ci0], &mid);
+                    edge_cells.entry(ek).or_default().push((key, *cell));
+                }
+                // Sub-edge M -> B
+                if (vm > 0.0) != (v1 > 0.0) {
+                    let ek = edge_key(&mid, &corners[ci1]);
+                    edge_cells.entry(ek).or_default().push((key, *cell));
+                }
+            } else {
+                let ek = edge_key(&corners[ci0], &corners[ci1]);
+                edge_cells.entry(ek).or_default().push((key, *cell));
+            }
         }
     }
 
@@ -166,6 +208,9 @@ pub fn extract_mesh_adaptive(
     // Phase 3.5: Fix winding order using SDF gradient.
     fix_winding(&vertices, &mut indices, node);
 
+    // Phase 3.6: Fix non-manifold edges from overlapping fans at CSG seams.
+    fix_non_manifold(&vertices, &mut indices, node);
+
     // Phase 4: Compute per-vertex normals.
     let normals: Vec<Vector3<f64>> = vertices.iter().map(|v| node.gradient(*v)).collect();
 
@@ -211,7 +256,20 @@ pub fn extract_mesh_from_sdf(sdf: &dyn Sdf, bbox: &BBox3, settings: &MeshSetting
         cell_vertex_map.insert(key, idx);
     }
 
-    // Phase 3: Generate faces (same as above).
+    // Phase 3: Generate faces (same T-junction-aware logic as above).
+    let all_leaves = tree_wrapper.collect_all_leaves();
+    let mut corner_set: std::collections::HashSet<(i64, i64, i64)> =
+        std::collections::HashSet::new();
+    for leaf in &all_leaves {
+        let cs = leaf.bbox.corners();
+        for c in &cs {
+            let qx = (c.x * QUANT_SCALE).round() as i64;
+            let qy = (c.y * QUANT_SCALE).round() as i64;
+            let qz = (c.z * QUANT_SCALE).round() as i64;
+            corner_set.insert((qx, qy, qz));
+        }
+    }
+
     let mut edge_cells: HashMap<EdgeKey, Vec<(CellKey, &OctreeCell)>> = HashMap::new();
 
     for cell in &surface_cells {
@@ -224,8 +282,26 @@ pub fn extract_mesh_from_sdf(sdf: &dyn Sdf, bbox: &BBox3, settings: &MeshSetting
             if (v0 > 0.0) == (v1 > 0.0) {
                 continue;
             }
-            let ek = edge_key(&corners[ci0], &corners[ci1]);
-            edge_cells.entry(ek).or_default().push((key, *cell));
+            // T-junction resolution: split edge if midpoint is a finer corner.
+            let mid = (corners[ci0] + corners[ci1]) * 0.5;
+            let qmx = (mid.x * QUANT_SCALE).round() as i64;
+            let qmy = (mid.y * QUANT_SCALE).round() as i64;
+            let qmz = (mid.z * QUANT_SCALE).round() as i64;
+
+            if corner_set.contains(&(qmx, qmy, qmz)) {
+                let vm = sdf.evaluate(mid);
+                if (v0 > 0.0) != (vm > 0.0) {
+                    let ek = edge_key(&corners[ci0], &mid);
+                    edge_cells.entry(ek).or_default().push((key, *cell));
+                }
+                if (vm > 0.0) != (v1 > 0.0) {
+                    let ek = edge_key(&mid, &corners[ci1]);
+                    edge_cells.entry(ek).or_default().push((key, *cell));
+                }
+            } else {
+                let ek = edge_key(&corners[ci0], &corners[ci1]);
+                edge_cells.entry(ek).or_default().push((key, *cell));
+            }
         }
     }
 
@@ -273,6 +349,9 @@ pub fn extract_mesh_from_sdf(sdf: &dyn Sdf, bbox: &BBox3, settings: &MeshSetting
 
     // Phase 3.5: Fix winding order using SDF gradient (central differences).
     fix_winding_sdf(&vertices, &mut indices, sdf);
+
+    // Phase 3.6: Fix non-manifold edges from overlapping fans at CSG seams.
+    fix_non_manifold_sdf(&vertices, &mut indices, sdf);
 
     // Phase 4: Normals — prefer analytical gradients, fall back to central differences.
     let normals: Vec<Vector3<f64>> = vertices
@@ -696,6 +775,303 @@ fn fix_winding_sdf(vertices: &[Vector3<f64>], indices: &mut [u32], sdf: &dyn Sdf
 }
 
 // ---------------------------------------------------------------------------
+// Manifold repair — remove excess triangles at non-manifold edges
+// ---------------------------------------------------------------------------
+
+/// Quantize a vertex position to an integer key for position-based edge matching.
+fn quant_vertex(v: &Vector3<f64>) -> (i64, i64, i64) {
+    // QUANT_SCALE (2^30) gives ~1e-9 resolution, matching the edge_key precision.
+    (
+        (v.x * QUANT_SCALE).round() as i64,
+        (v.y * QUANT_SCALE).round() as i64,
+        (v.z * QUANT_SCALE).round() as i64,
+    )
+}
+
+type PosEdgeKey = ((i64, i64, i64), (i64, i64, i64));
+
+fn pos_edge_key(a: &Vector3<f64>, b: &Vector3<f64>) -> PosEdgeKey {
+    let qa = quant_vertex(a);
+    let qb = quant_vertex(b);
+    if qa <= qb { (qa, qb) } else { (qb, qa) }
+}
+
+/// Remove triangles that create non-manifold edges (shared by >2 triangles).
+///
+/// At hard CSG intersection seams, the DC algorithm can produce overlapping
+/// triangle fans that share geometric edges. This pass:
+/// 1. Removes degenerate triangles (coincident vertices).
+/// 2. Iteratively removes excess triangles at over-shared edges, preferring
+///    to remove the triangle with the worst normal-gradient alignment.
+///    Uses a two-phase strategy: first safe removals (all edges stay >= 2),
+///    then aggressive removals to eliminate remaining non-manifold edges.
+fn fix_non_manifold(
+    vertices: &[Vector3<f64>],
+    indices: &mut Vec<u32>,
+    node: &SdfNode,
+) {
+    fix_non_manifold_impl(indices, vertices, |centroid| node.gradient(centroid));
+}
+
+/// Core manifold-repair logic, parameterized over the gradient function.
+fn fix_non_manifold_impl(
+    indices: &mut Vec<u32>,
+    vertices: &[Vector3<f64>],
+    grad_fn: impl Fn(Vector3<f64>) -> Vector3<f64>,
+) {
+    let ntri = indices.len() / 3;
+    if ntri == 0 {
+        return;
+    }
+
+    // Helper: get the 3 position-based edge keys for triangle ti.
+    let tri_edges = |ti: usize, idx: &[u32]| -> [PosEdgeKey; 3] {
+        let base = ti * 3;
+        let v0 = &vertices[idx[base] as usize];
+        let v1 = &vertices[idx[base + 1] as usize];
+        let v2 = &vertices[idx[base + 2] as usize];
+        [
+            pos_edge_key(v0, v1),
+            pos_edge_key(v1, v2),
+            pos_edge_key(v2, v0),
+        ]
+    };
+
+    // Score each triangle: normal alignment with SDF gradient.
+    // Lower score = worse = remove first.
+    let tri_scores: Vec<f64> = (0..ntri)
+        .map(|ti| {
+            let base = ti * 3;
+            let v0 = vertices[indices[base] as usize];
+            let v1 = vertices[indices[base + 1] as usize];
+            let v2 = vertices[indices[base + 2] as usize];
+            // Check for degenerate (coincident vertices).
+            let q0 = quant_vertex(&v0);
+            let q1 = quant_vertex(&v1);
+            let q2 = quant_vertex(&v2);
+            if q0 == q1 || q1 == q2 || q0 == q2 {
+                return -2.0; // degenerate — absolutely worst
+            }
+            let face_normal = (v1 - v0).cross(&(v2 - v0));
+            let area2 = face_normal.norm_squared();
+            if area2 < 1e-30 {
+                return -1.0;
+            }
+            let fn_norm = face_normal / area2.sqrt();
+            let centroid = (v0 + v1 + v2) / 3.0;
+            let grad = grad_fn(centroid);
+            let grad_len = grad.norm();
+            if grad_len < 1e-12 {
+                return 0.0;
+            }
+            fn_norm.dot(&grad) / grad_len
+        })
+        .collect();
+
+    let mut remove = vec![false; ntri];
+
+    // Phase 1: Remove degenerate triangles.
+    for ti in 0..ntri {
+        if tri_scores[ti] < -1.5 {
+            remove[ti] = true;
+        }
+    }
+
+    // Phase 2: Iteratively remove excess triangles at non-manifold edges.
+    // Strategy: build a global priority queue of "removable" triangles
+    // sorted by score. For each candidate, check if removing it is safe
+    // (all its edges still have >= 2 users). If not safe, try aggressive
+    // removal (accept creating boundary edges if it reduces total
+    // non-manifold count).
+    for _pass in 0..30 {
+        let mut changed = false;
+
+        // Build live edge counts.
+        let mut edge_count: HashMap<PosEdgeKey, usize> = HashMap::new();
+        for ti in 0..ntri {
+            if remove[ti] { continue; }
+            for ek in &tri_edges(ti, indices) {
+                *edge_count.entry(*ek).or_insert(0) += 1;
+            }
+        }
+
+        // Collect all triangles that touch a non-manifold edge, scored.
+        let mut candidates: Vec<(f64, usize)> = Vec::new();
+        let mut seen_tris = std::collections::HashSet::new();
+        for ti in 0..ntri {
+            if remove[ti] { continue; }
+            let edges = tri_edges(ti, indices);
+            let touches_nm = edges.iter().any(|ek| {
+                edge_count.get(ek).copied().unwrap_or(0) > 2
+            });
+            if touches_nm && seen_tris.insert(ti) {
+                candidates.push((tri_scores[ti], ti));
+            }
+        }
+
+        // Sort worst-first.
+        candidates.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        for &(_, ti) in &candidates {
+            if remove[ti] { continue; }
+
+            let edges = tri_edges(ti, indices);
+
+            // Check if this triangle still touches a non-manifold edge.
+            let still_nm = edges.iter().any(|ek| {
+                edge_count.get(ek).copied().unwrap_or(0) > 2
+            });
+            if !still_nm { continue; }
+
+            // Safe check: will removing this triangle create any boundary edges?
+            let safe = edges.iter().all(|ek| {
+                edge_count.get(ek).copied().unwrap_or(0) > 2
+            });
+
+            if safe {
+                remove[ti] = true;
+                changed = true;
+                for ek in &edges {
+                    if let Some(c) = edge_count.get_mut(ek) { *c -= 1; }
+                }
+            }
+        }
+
+        if !changed { break; }
+    }
+
+    // Phase 3: Aggressive removal for remaining non-manifold edges.
+    // Some non-manifold configurations can't be fixed with safe-only removal.
+    // For each remaining non-manifold edge, remove the worst triangle even
+    // if it creates boundary edges. This may leave small holes but ensures
+    // no edge has >2 triangles.
+    for _pass in 0..30 {
+        let mut changed = false;
+
+        let mut edge_count: HashMap<PosEdgeKey, usize> = HashMap::new();
+        for ti in 0..ntri {
+            if remove[ti] { continue; }
+            for ek in &tri_edges(ti, indices) {
+                *edge_count.entry(*ek).or_insert(0) += 1;
+            }
+        }
+
+        // Build edge → triangles for non-manifold edges.
+        let mut nm_edge_tris: HashMap<PosEdgeKey, Vec<usize>> = HashMap::new();
+        for ti in 0..ntri {
+            if remove[ti] { continue; }
+            for ek in &tri_edges(ti, indices) {
+                if edge_count.get(ek).copied().unwrap_or(0) > 2 {
+                    nm_edge_tris.entry(*ek).or_default().push(ti);
+                }
+            }
+        }
+
+        for (_ek, tris) in &nm_edge_tris {
+            if tris.len() <= 2 { continue; }
+
+            // Sort worst-first.
+            let mut scored: Vec<(f64, usize)> =
+                tris.iter().map(|&ti| (tri_scores[ti], ti)).collect();
+            scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+            // Remove worst until only 2 remain.
+            let to_remove = scored.len() - 2;
+            for &(_, ti) in scored.iter().take(to_remove) {
+                if !remove[ti] {
+                    remove[ti] = true;
+                    changed = true;
+                    for ek in &tri_edges(ti, indices) {
+                        if let Some(c) = edge_count.get_mut(ek) { *c -= 1; }
+                    }
+                }
+            }
+        }
+
+        if !changed { break; }
+    }
+
+    // Phase 4: Heal boundary edges left by aggressive removal.
+    // If a boundary edge (count=1) has a neighbor triangle that could "close"
+    // the hole, we skip this for now — the boundary holes at CSG seams are
+    // typically very small and closing them requires inserting new triangles,
+    // which is beyond simple removal.
+    //
+    // Instead, we attempt to re-add removed triangles that would close
+    // boundary edges without re-introducing non-manifold edges.
+    {
+        let mut edge_count: HashMap<PosEdgeKey, usize> = HashMap::new();
+        for ti in 0..ntri {
+            if remove[ti] { continue; }
+            for ek in &tri_edges(ti, indices) {
+                *edge_count.entry(*ek).or_insert(0) += 1;
+            }
+        }
+
+        // Find boundary edges.
+        let boundary_edges: std::collections::HashSet<PosEdgeKey> = edge_count
+            .iter()
+            .filter(|&(_, &c)| c == 1)
+            .map(|(ek, _)| *ek)
+            .collect();
+
+        if !boundary_edges.is_empty() {
+            // Try to re-add removed triangles that border boundary edges
+            // and wouldn't re-create non-manifold edges.
+            // Sort by score descending (best first).
+            let mut re_add_candidates: Vec<(f64, usize)> = (0..ntri)
+                .filter(|&ti| remove[ti] && tri_scores[ti] > -1.5)
+                .map(|ti| (tri_scores[ti], ti))
+                .collect();
+            re_add_candidates.sort_by(|a, b| {
+                b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+            for &(_, ti) in &re_add_candidates {
+                let edges = tri_edges(ti, indices);
+                // Only re-add if at least one of its edges is a boundary edge.
+                let touches_boundary = edges.iter().any(|ek| {
+                    edge_count.get(ek).copied().unwrap_or(0) == 1
+                });
+                // And re-adding wouldn't make any edge > 2.
+                let safe = edges.iter().all(|ek| {
+                    edge_count.get(ek).copied().unwrap_or(0) < 2
+                });
+                if touches_boundary && safe {
+                    remove[ti] = false;
+                    for ek in &edges {
+                        *edge_count.entry(*ek).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    // Rebuild index buffer without removed triangles.
+    let new_indices: Vec<u32> = (0..ntri)
+        .filter(|&ti| !remove[ti])
+        .flat_map(|ti| {
+            let base = ti * 3;
+            [indices[base], indices[base + 1], indices[base + 2]]
+        })
+        .collect();
+
+    *indices = new_indices;
+}
+
+/// Same as fix_non_manifold but for &dyn Sdf meshes.
+fn fix_non_manifold_sdf(
+    vertices: &[Vector3<f64>],
+    indices: &mut Vec<u32>,
+    sdf: &dyn Sdf,
+) {
+    fix_non_manifold_impl(indices, vertices, |centroid| {
+        sdf.gradient(centroid)
+            .unwrap_or_else(|| central_diff_gradient_sdf(sdf, centroid))
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Octree construction from &dyn Sdf (no interval pruning)
 // ---------------------------------------------------------------------------
 
@@ -711,6 +1087,12 @@ impl OctreeWrapper {
         result
     }
 
+    fn collect_all_leaves(&self) -> Vec<&OctreeCell> {
+        let mut result = Vec::new();
+        Self::gather_leaves(&self.root, &mut result);
+        result
+    }
+
     fn collect_surface_cells<'a>(cell: &'a OctreeCell, result: &mut Vec<&'a OctreeCell>) {
         if cell.is_leaf() {
             if cell.has_sign_change() {
@@ -719,6 +1101,16 @@ impl OctreeWrapper {
         } else {
             for child in cell.children.as_ref().unwrap().iter() {
                 Self::collect_surface_cells(child, result);
+            }
+        }
+    }
+
+    fn gather_leaves<'a>(cell: &'a OctreeCell, result: &mut Vec<&'a OctreeCell>) {
+        if cell.is_leaf() {
+            result.push(cell);
+        } else {
+            for child in cell.children.as_ref().unwrap().iter() {
+                Self::gather_leaves(child, result);
             }
         }
     }
