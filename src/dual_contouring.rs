@@ -145,11 +145,16 @@ pub fn extract_mesh_adaptive(
     // Phase 4: Compute per-vertex normals.
     let normals: Vec<Vector3<f64>> = vertices.iter().map(|v| node.gradient(*v)).collect();
 
-    TriangleMesh {
+    let mesh = TriangleMesh {
         vertices,
         normals,
         indices,
-    }
+    };
+
+    // Post-process: split vertices at sharp edges so each side of a crease
+    // gets its own normal. This fixes "chewy" visual artifacts on shapes
+    // with hard feature edges (e.g. capped cones, boxes).
+    mesh.split_sharp_edges(35.0)
 }
 
 /// Extract a mesh from a `&dyn Sdf` trait object (compatibility wrapper).
@@ -251,11 +256,16 @@ pub fn extract_mesh_from_sdf(sdf: &dyn Sdf, bbox: &BBox3, settings: &MeshSetting
         })
         .collect();
 
-    TriangleMesh {
+    let mesh = TriangleMesh {
         vertices,
         normals,
         indices,
-    }
+    };
+
+    // Post-process: split vertices at sharp edges so each side of a crease
+    // gets its own normal. This fixes "chewy" visual artifacts on shapes
+    // with hard feature edges (e.g. capped cones, boxes).
+    mesh.split_sharp_edges(35.0)
 }
 
 // ---------------------------------------------------------------------------

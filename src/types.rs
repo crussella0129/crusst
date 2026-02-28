@@ -59,6 +59,172 @@ impl TriangleMesh {
     }
 }
 
+impl TriangleMesh {
+    /// Split vertices at sharp edges so each face gets correct normals.
+    ///
+    /// At a sharp crease (e.g., the flat cap meeting the conical wall of a
+    /// CappedCone), DC produces one vertex shared by both sides with a single
+    /// normal. This causes visible faceting ("chewy" edges) because the
+    /// renderer interpolates the wrong normal across faces on the opposite
+    /// side of the crease.
+    ///
+    /// This function recomputes normals per-face, then merges vertex normals
+    /// only across edges where adjacent face normals agree (angle < threshold).
+    /// Vertices at sharp creases are duplicated so each side gets its own normal.
+    ///
+    /// `angle_threshold_deg`: edges with adjacent face normal angle above this
+    /// are treated as sharp creases (typical: 30-45 degrees).
+    pub fn split_sharp_edges(&self, angle_threshold_deg: f64) -> TriangleMesh {
+        use std::collections::HashMap;
+
+        let cos_threshold = angle_threshold_deg.to_radians().cos();
+        let ntri = self.indices.len() / 3;
+
+        // Phase 1: Compute face normals
+        let mut face_normals = Vec::with_capacity(ntri);
+        for tri in self.indices.chunks(3) {
+            let v0 = self.vertices[tri[0] as usize];
+            let v1 = self.vertices[tri[1] as usize];
+            let v2 = self.vertices[tri[2] as usize];
+            let e1 = v1 - v0;
+            let e2 = v2 - v0;
+            let n = e1.cross(&e2);
+            let len = n.norm();
+            if len > 1e-15 {
+                face_normals.push(n / len);
+            } else {
+                face_normals.push(Vector3::new(0.0, 1.0, 0.0));
+            }
+        }
+
+        // Phase 2: Build edge → face adjacency
+        // Key: (min_vertex_idx, max_vertex_idx), Value: list of face indices
+        let mut edge_faces: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+        for (fi, tri) in self.indices.chunks(3).enumerate() {
+            let edges = [
+                (tri[0].min(tri[1]), tri[0].max(tri[1])),
+                (tri[1].min(tri[2]), tri[1].max(tri[2])),
+                (tri[0].min(tri[2]), tri[0].max(tri[2])),
+            ];
+            for edge in &edges {
+                edge_faces.entry(*edge).or_default().push(fi);
+            }
+        }
+
+        // Phase 3: Build smooth groups via flood fill.
+        // Two adjacent faces are in the same smooth group if their normals
+        // agree (dot product > cos_threshold).
+        // Each face gets assigned a group ID per vertex it uses.
+        // face_vertex_group[face_idx][local_vert_idx] = group_id
+        // group = (original_vertex_idx, smooth_group_id)
+
+        // For each original vertex, track which faces use it
+        let mut vertex_faces: HashMap<u32, Vec<(usize, usize)>> = HashMap::new(); // vert -> [(face_idx, local_idx)]
+        for (fi, tri) in self.indices.chunks(3).enumerate() {
+            for (li, &vi) in tri.iter().enumerate() {
+                vertex_faces.entry(vi).or_default().push((fi, li));
+            }
+        }
+
+        // For each vertex, group its faces into smooth groups
+        let mut new_vertices: Vec<Vector3<f64>> = Vec::new();
+        let mut new_normals: Vec<Vector3<f64>> = Vec::new();
+        let mut new_indices = vec![0u32; self.indices.len()];
+
+        for (&vi, face_refs) in &vertex_faces {
+            // Build adjacency graph among faces sharing this vertex
+            // Two faces are smooth-connected if they share an edge through vi
+            // AND their face normals agree.
+            let nf = face_refs.len();
+            let mut visited = vec![false; nf];
+            let mut groups: Vec<Vec<usize>> = Vec::new(); // groups of local indices into face_refs
+
+            for start in 0..nf {
+                if visited[start] {
+                    continue;
+                }
+                let mut group = vec![start];
+                visited[start] = true;
+                let mut queue = vec![start];
+
+                while let Some(cur) = queue.pop() {
+                    let (cur_fi, _) = face_refs[cur];
+                    let cur_fn = face_normals[cur_fi];
+
+                    for next in 0..nf {
+                        if visited[next] {
+                            continue;
+                        }
+                        let (next_fi, _) = face_refs[next];
+                        let next_fn = face_normals[next_fi];
+
+                        // Check if faces share an edge through vi and normals agree
+                        if cur_fn.dot(&next_fn) > cos_threshold && faces_share_edge_through_vertex(
+                            &self.indices, cur_fi, next_fi, vi,
+                        ) {
+                            visited[next] = true;
+                            group.push(next);
+                            queue.push(next);
+                        }
+                    }
+                }
+                groups.push(group);
+            }
+
+            // For each smooth group, create one new vertex with averaged normal
+            for group in &groups {
+                let new_vi = new_vertices.len() as u32;
+                new_vertices.push(self.vertices[vi as usize]);
+
+                // Average face normals in this group (area-weighted would be better
+                // but uniform is good enough for visual quality)
+                let mut avg_n = Vector3::zeros();
+                for &local_idx in group {
+                    let (fi, _) = face_refs[local_idx];
+                    avg_n += face_normals[fi];
+                }
+                let len = avg_n.norm();
+                if len > 1e-15 {
+                    new_normals.push(avg_n / len);
+                } else {
+                    new_normals.push(self.normals[vi as usize]);
+                }
+
+                // Update indices for all faces in this group
+                for &local_idx in group {
+                    let (fi, li) = face_refs[local_idx];
+                    new_indices[fi * 3 + li] = new_vi;
+                }
+            }
+        }
+
+        TriangleMesh {
+            vertices: new_vertices,
+            normals: new_normals,
+            indices: new_indices,
+        }
+    }
+}
+
+/// Check if two faces share an edge that passes through vertex `vi`.
+fn faces_share_edge_through_vertex(indices: &[u32], fi_a: usize, fi_b: usize, vi: u32) -> bool {
+    let ta = &indices[fi_a * 3..fi_a * 3 + 3];
+    let tb = &indices[fi_b * 3..fi_b * 3 + 3];
+    // Both faces use vi. They share an edge through vi if they share
+    // another vertex besides vi.
+    for &va in ta {
+        if va == vi {
+            continue;
+        }
+        for &vb in tb {
+            if va == vb {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Axis-aligned bounding box.
 #[derive(Clone, Copy, Debug)]
 pub struct BBox3 {

@@ -42,16 +42,6 @@ impl Sdf for Sphere {
     fn evaluate(&self, point: Vector3<f64>) -> f64 {
         primitives::sdf_sphere(point, self.center, self.radius)
     }
-
-    fn gradient(&self, point: Vector3<f64>) -> Option<Vector3<f64>> {
-        let d = point - self.center;
-        let len = d.norm();
-        if len > 1e-15 {
-            Some(d / len)
-        } else {
-            Some(Vector3::new(0.0, 1.0, 0.0))
-        }
-    }
 }
 
 pub struct Box3 {
@@ -256,10 +246,6 @@ impl HalfSpace {
 impl Sdf for HalfSpace {
     fn evaluate(&self, point: Vector3<f64>) -> f64 {
         self.normal.dot(&point) + self.d
-    }
-
-    fn gradient(&self, _point: Vector3<f64>) -> Option<Vector3<f64>> {
-        Some(self.normal)
     }
 }
 
