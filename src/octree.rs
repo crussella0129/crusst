@@ -10,6 +10,7 @@
 
 use crate::dag::SdfNode;
 use crate::types::{BBox3, MeshSettings};
+use nalgebra::Vector3;
 
 /// A single cell in the adaptive octree.
 pub struct OctreeCell {
@@ -190,6 +191,46 @@ impl Octree {
         } else {
             for child in cell.children.as_ref().unwrap().iter() {
                 Self::collect_surface_cells(child, result);
+            }
+        }
+    }
+
+    /// Find the leaf cell containing the given point.
+    /// Returns `None` if the point is outside the root bounding box.
+    pub fn find_leaf_containing(&self, point: Vector3<f64>) -> Option<&OctreeCell> {
+        Self::find_leaf_in(&self.root, point)
+    }
+
+    fn find_leaf_in<'a>(cell: &'a OctreeCell, point: Vector3<f64>) -> Option<&'a OctreeCell> {
+        if !cell.bbox.contains(point) {
+            return None;
+        }
+        if cell.is_leaf() {
+            return Some(cell);
+        }
+        // Descend into the child whose octant contains the point
+        for child in cell.children.as_ref().unwrap().iter() {
+            if child.bbox.contains(point) {
+                return Self::find_leaf_in(child, point);
+            }
+        }
+        // Fallback: point is exactly on an octant boundary
+        Some(cell.children.as_ref().unwrap().first().unwrap())
+    }
+
+    /// Collect all leaf cells in the tree.
+    pub fn collect_all_leaves(&self) -> Vec<&OctreeCell> {
+        let mut result = Vec::new();
+        Self::gather_leaves(&self.root, &mut result);
+        result
+    }
+
+    fn gather_leaves<'a>(cell: &'a OctreeCell, result: &mut Vec<&'a OctreeCell>) {
+        if cell.is_leaf() {
+            result.push(cell);
+        } else {
+            for child in cell.children.as_ref().unwrap().iter() {
+                Self::gather_leaves(child, result);
             }
         }
     }
