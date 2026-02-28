@@ -5,6 +5,16 @@ use nalgebra::{Rotation3, Vector2, Vector3};
 /// Trait for any object that can evaluate a signed distance.
 pub trait Sdf: Send + Sync {
     fn evaluate(&self, point: Vector3<f64>) -> f64;
+
+    /// Analytical gradient (surface normal direction) at a point.
+    ///
+    /// Returns `Some(unit_normal)` if the shape provides an analytical gradient,
+    /// or `None` to fall back to central finite differences. Shapes with sharp
+    /// edges (e.g. capped cones) should implement this to avoid gradient
+    /// smearing at feature junctions.
+    fn gradient(&self, _point: Vector3<f64>) -> Option<Vector3<f64>> {
+        None
+    }
 }
 
 /// Trait for a 2D signed distance function.
@@ -31,6 +41,16 @@ impl Sphere {
 impl Sdf for Sphere {
     fn evaluate(&self, point: Vector3<f64>) -> f64 {
         primitives::sdf_sphere(point, self.center, self.radius)
+    }
+
+    fn gradient(&self, point: Vector3<f64>) -> Option<Vector3<f64>> {
+        let d = point - self.center;
+        let len = d.norm();
+        if len > 1e-15 {
+            Some(d / len)
+        } else {
+            Some(Vector3::new(0.0, 1.0, 0.0))
+        }
     }
 }
 
@@ -72,6 +92,11 @@ impl CappedCone {
 impl Sdf for CappedCone {
     fn evaluate(&self, point: Vector3<f64>) -> f64 {
         primitives::sdf_capped_cone(point, self.a, self.b, self.ra, self.rb)
+    }
+
+    fn gradient(&self, point: Vector3<f64>) -> Option<Vector3<f64>> {
+        let (_, normal) = primitives::sdf_capped_cone_with_normal(point, self.a, self.b, self.ra, self.rb);
+        Some(normal)
     }
 }
 
@@ -231,6 +256,10 @@ impl HalfSpace {
 impl Sdf for HalfSpace {
     fn evaluate(&self, point: Vector3<f64>) -> f64 {
         self.normal.dot(&point) + self.d
+    }
+
+    fn gradient(&self, _point: Vector3<f64>) -> Option<Vector3<f64>> {
+        Some(self.normal)
     }
 }
 

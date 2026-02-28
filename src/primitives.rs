@@ -23,8 +23,6 @@ pub fn sdf_box(point: Vector3<f64>, center: Vector3<f64>, half_extents: Vector3<
 /// Connects two circles: one centered at `a` with radius `ra`, and another
 /// at `b` with radius `rb`. For a sharp cone, set `rb = 0`. Handles the
 /// base caps, tip, and conical wall correctly with no approximation.
-///
-/// Based on Inigo Quilez's exact capped cone SDF.
 pub fn sdf_capped_cone(
     point: Vector3<f64>,
     a: Vector3<f64>,
@@ -32,23 +30,205 @@ pub fn sdf_capped_cone(
     ra: f64,
     rb: f64,
 ) -> f64 {
-    let rba = rb - ra;
-    let ba = b - a;
-    let baba = ba.dot(&ba);
+    sdf_capped_cone_with_normal(point, a, b, ra, rb).0
+}
+
+/// Exact signed distance to a capped cone, returning both distance and the
+/// analytical surface normal (unit gradient of the SDF).
+///
+/// Uses a closest-point decomposition: finds the nearest point on the cone
+/// surface (wall, cap faces, rims, or tip) and derives the gradient from
+/// the direction between the query point and that closest point.
+///
+/// For exterior points: gradient = (P - closest).normalize()
+/// For interior points: gradient = (closest - P).normalize()
+/// Both cases yield the outward surface normal at the closest point.
+pub fn sdf_capped_cone_with_normal(
+    point: Vector3<f64>,
+    a: Vector3<f64>,
+    b: Vector3<f64>,
+    ra: f64,
+    rb: f64,
+) -> (f64, Vector3<f64>) {
+    let ab = b - a;
+    let ab_len_sq = ab.dot(&ab);
+    let ab_len = ab_len_sq.sqrt();
+
+    // Degenerate: a == b → sphere of max radius
+    if ab_len < 1e-15 {
+        let r = ra.max(rb);
+        let d = (point - a).norm() - r;
+        let dir = point - a;
+        let n = if dir.norm() > 1e-15 {
+            dir.normalize()
+        } else {
+            Vector3::new(0.0, 1.0, 0.0)
+        };
+        return (d, n);
+    }
+
+    let axis = ab / ab_len; // unit axis direction A→B
+
+    // Project point onto cone axis
     let pa = point - a;
-    let papa = pa.dot(&pa);
-    let paba = pa.dot(&ba) / baba;
-    let x = (papa - paba * paba * baba).max(0.0).sqrt();
-    let cax = (x - if paba < 0.5 { ra } else { rb }).max(0.0);
-    let cay = (paba - 0.5).abs() - 0.5;
-    let k = rba * rba + baba;
-    let f = ((rba * (x - ra) + paba * baba) / k).clamp(0.0, 1.0);
-    let cbx = x - ra - f * rba;
-    let cby = paba - f;
-    let s = if cbx < 0.0 && cay < 0.0 { -1.0 } else { 1.0 };
-    s * (cax * cax + cay * cay * baba)
-        .min(cbx * cbx + cby * cby * baba)
-        .sqrt()
+    let t_raw = pa.dot(&axis); // signed distance along axis from A
+    let t = t_raw / ab_len; // normalized: 0 at A, 1 at B
+
+    // Radial vector (perpendicular to axis)
+    let radial_vec = pa - axis * t_raw;
+    let r = radial_vec.norm(); // radial distance from axis
+
+    // Cone radius at axial parameter t (clamped to [0,1])
+    let r_at_t = ra + t.clamp(0.0, 1.0) * (rb - ra);
+
+    // Inside test: point is between caps AND inside the cone radius
+    let inside = t >= 0.0 && t <= 1.0 && r < r_at_t;
+
+    // Radial unit vector (direction from axis toward point)
+    let radial_unit = if r > 1e-15 {
+        radial_vec / r
+    } else {
+        // On axis: pick an arbitrary perpendicular direction
+        let arb = if axis.x.abs() < 0.9 {
+            Vector3::new(1.0, 0.0, 0.0)
+        } else {
+            Vector3::new(0.0, 1.0, 0.0)
+        };
+        (arb - axis * axis.dot(&arb)).normalize()
+    };
+
+    // --- Find the closest point on the cone surface ---
+    // We track (closest_point, geometric_normal) for each candidate feature.
+    // geometric_normal is the outward surface normal at the closest point,
+    // used as fallback when the query point is very close to the surface.
+
+    let mut best_dist_sq = f64::INFINITY;
+    let mut best_closest = a;
+    let mut best_geo_normal = Vector3::new(0.0, 1.0, 0.0);
+
+    // Wall outward normal (constant along the entire conical wall)
+    let slant_len = ((ra - rb) * (ra - rb) + ab_len_sq).sqrt();
+    let wall_n_radial = ab_len / slant_len;
+    let wall_n_axial = (ra - rb) / slant_len;
+    let wall_geo_normal = radial_unit * wall_n_radial + axis * wall_n_axial;
+
+    // Project onto the conical wall line in (axial, radial) space:
+    // Wall line: from (0, ra) to (ab_len, rb) parametrized by s ∈ [0, 1]
+    let dr = rb - ra;
+    let s_unclamped = (t_raw * ab_len + (r - ra) * dr) / (ab_len_sq + dr * dr);
+    let s_wall = s_unclamped.clamp(0.0, 1.0);
+    let wall_r = ra + s_wall * dr;
+    let wall_axial = s_wall * ab_len;
+    let wall_closest = a + axis * wall_axial + radial_unit * wall_r;
+
+    // Wall candidate — only use wall geometric normal when the projection
+    // didn't clamp (i.e., the closest point is on the wall interior, not a rim).
+    {
+        let diff = point - wall_closest;
+        let d_sq = diff.dot(&diff);
+        if d_sq < best_dist_sq {
+            best_dist_sq = d_sq;
+            best_closest = wall_closest;
+            // If s_wall was clamped, the closest point is actually on a rim/tip,
+            // so the geometric wall normal is wrong. We'll use direction-based
+            // normal for those cases (handled by the final normal computation below).
+            best_geo_normal = wall_geo_normal;
+        }
+    }
+
+    // Cap A candidates
+    if ra > 1e-15 {
+        // Cap A face (flat disk at a, radius ra)
+        if r <= ra {
+            let cap_closest = a + radial_vec; // project onto cap plane
+            let diff = point - cap_closest;
+            let d_sq = diff.dot(&diff);
+            if d_sq < best_dist_sq {
+                best_dist_sq = d_sq;
+                best_closest = cap_closest;
+                best_geo_normal = -axis;
+            }
+        }
+        // Cap A rim (circle at a, radius ra)
+        {
+            let rim_point = a + radial_unit * ra;
+            let diff = point - rim_point;
+            let d_sq = diff.dot(&diff);
+            if d_sq < best_dist_sq {
+                best_dist_sq = d_sq;
+                best_closest = rim_point;
+                best_geo_normal = -axis; // fallback; direction-based will override
+            }
+        }
+    } else {
+        // ra == 0: point tip at a
+        let diff = point - a;
+        let d_sq = diff.dot(&diff);
+        if d_sq < best_dist_sq {
+            best_dist_sq = d_sq;
+            best_closest = a;
+            best_geo_normal = -axis;
+        }
+    }
+
+    // Cap B candidates
+    if rb > 1e-15 {
+        // Cap B face (flat disk at b, radius rb)
+        if r <= rb {
+            let cap_closest = b + radial_vec; // project onto cap plane
+            let diff = point - cap_closest;
+            let d_sq = diff.dot(&diff);
+            if d_sq < best_dist_sq {
+                best_dist_sq = d_sq;
+                best_closest = cap_closest;
+                best_geo_normal = axis;
+            }
+        }
+        // Cap B rim
+        {
+            let rim_point = b + radial_unit * rb;
+            let diff = point - rim_point;
+            let d_sq = diff.dot(&diff);
+            if d_sq < best_dist_sq {
+                best_dist_sq = d_sq;
+                best_closest = rim_point;
+                best_geo_normal = axis;
+            }
+        }
+    } else {
+        // rb == 0: point tip at b
+        let diff = point - b;
+        let d_sq = diff.dot(&diff);
+        if d_sq < best_dist_sq {
+            best_dist_sq = d_sq;
+            best_closest = b;
+            best_geo_normal = axis;
+        }
+    }
+
+    let dist = best_dist_sq.sqrt();
+    let signed_dist = if inside { -dist } else { dist };
+
+    // Compute the gradient (outward surface normal).
+    // For exterior: gradient = (P - closest).normalize()
+    // For interior: gradient = (closest - P).normalize()
+    // When the point is very close to the surface, this direction becomes
+    // numerically unstable, so we fall back to the geometric normal.
+    let diff = point - best_closest;
+    let diff_len = diff.norm();
+
+    let normal = if diff_len > 1e-10 {
+        if inside {
+            -diff / diff_len // points outward (from interior toward surface)
+        } else {
+            diff / diff_len // points outward (from surface toward exterior)
+        }
+    } else {
+        // On or very near the surface: use geometric normal
+        best_geo_normal.normalize()
+    };
+
+    (signed_dist, normal)
 }
 
 pub fn sdf_cylinder(

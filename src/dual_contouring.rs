@@ -242,10 +242,13 @@ pub fn extract_mesh_from_sdf(sdf: &dyn Sdf, bbox: &BBox3, settings: &MeshSetting
         emit_fan(&sorted_indices, sign_positive_first, &mut indices);
     }
 
-    // Phase 4: Normals via central differences.
+    // Phase 4: Normals — prefer analytical gradients, fall back to central differences.
     let normals: Vec<Vector3<f64>> = vertices
         .iter()
-        .map(|v| central_diff_gradient_sdf(sdf, *v))
+        .map(|v| {
+            sdf.gradient(*v)
+                .unwrap_or_else(|| central_diff_gradient_sdf(sdf, *v))
+        })
         .collect();
 
     TriangleMesh {
@@ -469,7 +472,8 @@ fn compute_cell_vertex_sdf(sdf: &dyn Sdf, cell: &OctreeCell, tolerance: f64) -> 
             continue;
         }
         let crossing = find_crossing_sdf(sdf, corners[ci0], corners[ci1], v0, v1, tolerance);
-        let normal = central_diff_gradient_sdf(sdf, crossing);
+        let normal = sdf.gradient(crossing)
+            .unwrap_or_else(|| central_diff_gradient_sdf(sdf, crossing));
         positions.push(crossing);
         normals.push(normal);
     }
