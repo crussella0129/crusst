@@ -22,6 +22,11 @@ use crate::types::{BBox3, MeshSettings, TriangleMesh};
 use nalgebra::Vector3;
 use std::collections::HashMap;
 
+/// Quantization scale for discretizing floating-point coordinates to integer
+/// grid keys. 2^30 gives ~9.3e-10 resolution per unit — sufficient for
+/// depths up to 30 without collisions.
+const QUANT_SCALE: f64 = (1u64 << 30) as f64;
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -286,9 +291,9 @@ struct CellKey {
 fn cell_key(cell: &OctreeCell) -> CellKey {
     // Use a large multiplier to discretize floating-point coordinates to
     // integer grid coordinates. At depth d, cells have size S/2^d where S
-    // is the root bbox size. We multiply by 2^20 to get integer precision
-    // that works for depths up to 20.
-    let scale = (1u64 << 20) as f64;
+    // is the root bbox size. QUANT_SCALE (2^30) gives integer precision
+    // that works for depths up to 30.
+    let scale = QUANT_SCALE;
     CellKey {
         ix: (cell.bbox.min.x * scale).round() as i64,
         iy: (cell.bbox.min.y * scale).round() as i64,
@@ -316,7 +321,7 @@ struct EdgeKey {
 }
 
 fn edge_key(p0: &Vector3<f64>, p1: &Vector3<f64>) -> EdgeKey {
-    let scale = (1u64 << 20) as f64;
+    let scale = QUANT_SCALE;
     let ax = (p0.x * scale).round() as i64;
     let ay = (p0.y * scale).round() as i64;
     let az = (p0.z * scale).round() as i64;
@@ -532,7 +537,7 @@ fn sort_vertices_around_edge(
     }
 
     // Reconstruct approximate edge direction from the edge key.
-    let scale = (1u64 << 20) as f64;
+    let scale = QUANT_SCALE;
     let ea = Vector3::new(
         ek.ax as f64 / scale,
         ek.ay as f64 / scale,
