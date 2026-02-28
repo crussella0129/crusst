@@ -1,321 +1,416 @@
-# Crusst — Rust Based Geometry Kernel
+# Crusst — SDF Geometry Kernel in Rust
 
-A standalone **Signed Distance Function (SDF)** geometry kernel written in pure Rust. Crusst provides composable shape primitives, boolean operations, parametric path sweeping, parallel mesh extraction, and STL export — everything needed to go from mathematical shape definition to triangle mesh.
+A standalone **Signed Distance Function (SDF)** geometry kernel written in pure Rust. Crusst provides composable shape primitives, constructive solid geometry, targeted fillet/chamfer blending with continuity control (G0–G3), adaptive dual contouring mesh extraction, parametric path sweeping, and multi-format export — everything needed to go from mathematical shape definition to watertight triangle mesh.
+
+## Table of Contents
+
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Core Concepts](#core-concepts)
+- [API Overview](#api-overview)
+  - [Builder API](#builder-api)
+  - [Primitives](#primitives)
+  - [CSG Operations](#csg-operations)
+  - [Transforms](#transforms)
+  - [Fillet & Chamfer System](#fillet--chamfer-system)
+  - [Round & Chamfer CSG](#round--chamfer-csg)
+  - [Meshing](#meshing)
+  - [Export](#export)
+  - [Voxelization](#voxelization)
+  - [Parametric Paths & Transport](#parametric-paths--transport)
+- [Architecture](#architecture)
+- [Documentation](#documentation)
+- [Dependencies](#dependencies)
+- [License](#license)
 
 ## Installation
 
 ```toml
 [dependencies]
-crusst = { git = "https://github.com/crussella0129/crusst.git" }
+crusst = { git = "https://github.com/crussella0129/crusst.git", branch = "v1.1" }
 ```
 
-Crusst depends on [`nalgebra`](https://nalgebra.org) for linear algebra. All spatial types use `Vector3<f64>`.
+All spatial types use `nalgebra::Vector3<f64>`. Enable the `mint` feature for interoperability with glam, cgmath, or ultraviolet:
+
+```toml
+crusst = { git = "https://github.com/crussella0129/crusst.git", branch = "v1.1", features = ["mint"] }
+```
 
 ## Quick Start
 
+### Evaluate a shape
+
 ```rust
-use crusst::shape::{Sphere, Sdf};
-use crusst::mesh::extract_mesh;
-use crusst::export::write_stl;
-use nalgebra::Vector3;
+use crusst::builder::Shape;
 
-// Define a sphere with radius 5 centered at the origin
-let sphere = Sphere::new(Vector3::zeros(), 5.0);
-
-// Query the signed distance at any point
-assert!(sphere.evaluate(Vector3::zeros()) < 0.0);       // inside
-assert!(sphere.evaluate(Vector3::new(5.0, 0.0, 0.0)).abs() < 1e-6); // on surface
-assert!(sphere.evaluate(Vector3::new(10.0, 0.0, 0.0)) > 0.0);      // outside
-
-// Extract a triangle mesh via marching cubes
-let mesh = extract_mesh(
-    &sphere,
-    Vector3::new(-6.0, -6.0, -6.0), // bounding box min
-    Vector3::new(6.0, 6.0, 6.0),    // bounding box max
-    64,                               // grid resolution
-);
-
-// Export to binary STL
-write_stl(&mesh, "sphere.stl").unwrap();
+let sphere = Shape::sphere(5.0);
+assert!(sphere.distance([0.0, 0.0, 0.0].into()) < 0.0);       // inside
+assert!(sphere.distance([5.0, 0.0, 0.0].into()).abs() < 1e-6); // on surface
+assert!(sphere.distance([10.0, 0.0, 0.0].into()) > 0.0);       // outside
 ```
 
-## Modules
-
-### `primitives` — Functional SDF Primitives
-
-Low-level distance functions that take a query point and shape parameters, returning a signed distance value. Negative inside, zero on surface, positive outside.
-
-| Function | Description |
-|---|---|
-| `sdf_sphere(point, center, radius)` | Distance to a sphere |
-| `sdf_box(point, center, half_extents)` | Distance to an axis-aligned box |
-| `sdf_capped_cone(point, a, b, ra, rb)` | Distance to a cone frustum between endpoints `a` and `b` with radii `ra` and `rb` |
-| `sdf_cylinder(point, base, axis, radius, height)` | Distance to a cylinder |
+### Boolean operations
 
 ```rust
-use crusst::primitives::sdf_sphere;
+use crusst::builder::Shape;
+
+let base = Shape::box3(5.0, 5.0, 5.0);
+let hole = Shape::cylinder(2.0, 12.0).translate(0.0, 0.0, 0.0);
+let part = base.subtract(hole);
+```
+
+### Fillet edges
+
+```rust
+use crusst::builder::Shape;
+use crusst::blend;
+use crusst::feature::ft;
+
+let box_shape = Shape::box3(5.0, 5.0, 5.0);
+let filleted = box_shape.fillet(blend::g2(1.0), vec![ft(0, 0).all_edges()]);
+```
+
+### Mesh and export
+
+```rust
+use crusst::builder::Shape;
+use crusst::types::MeshSettings;
+
+let shape = Shape::sphere(5.0);
+let mesh = shape.mesh(MeshSettings::default());
+
+shape.export_obj("sphere.obj").unwrap();
+shape.export_stl("sphere.stl").unwrap();
+shape.export_step("sphere.step").unwrap();
+```
+
+## Core Concepts
+
+### Signed Distance Functions
+
+A **signed distance function** (SDF) maps every point in 3D space to a scalar value representing the shortest distance to the nearest surface:
+
+| Region | SDF value | Convention |
+|--------|-----------|------------|
+| Inside the solid | Negative | `f(p) < 0` |
+| On the surface | Zero | `f(p) = 0` |
+| Outside the solid | Positive | `f(p) > 0` |
+
+SDFs compose algebraically: `union(A, B) = min(A, B)`, `intersection(A, B) = max(A, B)`, `difference(A, B) = max(A, -B)`. This makes complex geometry trivially constructible from simple primitives.
+
+### The DAG
+
+Internally, Crusst represents geometry as a **directed acyclic graph** (`SdfNode`) of operations. Each node in the DAG is one of:
+- A **primitive** (sphere, box, cylinder, ...)
+- A **CSG operation** (union, intersection, difference, smooth variants)
+- A **transform** (translate, rotate, scale, mirror, shell)
+- A **targeted blend** (fillet or chamfer with a specific profile and feature targets)
+
+The DAG enables three evaluation modes:
+1. **Point evaluation** — `f(p) → f64` for SDF queries
+2. **Interval evaluation** — `f([x₀,x₁]×[y₀,y₁]×[z₀,z₁]) → [lo, hi]` for conservative octree pruning
+3. **Gradient evaluation** — `∇f(p) → Vector3` for dual contouring vertex placement
+
+## API Overview
+
+### Builder API
+
+The `Shape` struct is the primary user-facing API. It wraps an `Arc<SdfNode>` and provides a fluent interface for constructing, querying, and exporting geometry. Shapes are cheaply cloneable (shared ownership via `Arc`).
+
+```rust
+use crusst::builder::Shape;
+
+// Build a mounting bracket
+let base = Shape::box3(10.0, 2.0, 6.0);
+let hole = Shape::cylinder(1.5, 6.0).translate(3.0, 0.0, 0.0);
+let bracket = base
+    .subtract(hole.clone())
+    .subtract(hole.translate(-6.0, 0.0, 0.0))
+    .smooth_union(Shape::box3(2.0, 4.0, 6.0).translate(-4.0, 3.0, 0.0), 0.5);
+
+bracket.export_obj("bracket.obj").unwrap();
+```
+
+**Primitive constructors:**
+
+| Method | Description |
+|--------|-------------|
+| `Shape::sphere(radius)` | Sphere at origin |
+| `Shape::box3(hx, hy, hz)` | Axis-aligned box (half-extents) |
+| `Shape::cylinder(radius, height)` | Y-axis cylinder |
+| `Shape::torus(major, minor)` | Torus in the XZ plane |
+| `Shape::capsule(a, b, radius)` | Sphere-swept line segment |
+| `Shape::capped_cone(a, b, ra, rb)` | Cone frustum between endpoints |
+| `Shape::rounded_box(hx, hy, hz, r)` | Box with uniform edge rounding |
+| `Shape::ellipsoid(rx, ry, rz)` | Axis-aligned ellipsoid |
+| `Shape::rounded_cylinder(r, rr, hh)` | Cylinder with rounded edges |
+| `Shape::half_space(normal, d)` | Infinite half-space |
+
+### Primitives
+
+The `primitives` module provides low-level functional SDF distance functions that operate on raw `Vector3<f64>` values:
+
+```rust
+use crusst::primitives::{sdf_sphere, sdf_box, sdf_cylinder, sdf_torus};
 use nalgebra::Vector3;
 
 let d = sdf_sphere(Vector3::new(3.0, 0.0, 0.0), Vector3::zeros(), 1.0);
-assert!((d - 2.0).abs() < 1e-6); // 3 units from center, radius 1 → distance 2
+assert!((d - 2.0).abs() < 1e-6); // distance 2 from a radius-1 sphere
 ```
 
-### `csg` — Constructive Solid Geometry Operations
+All nine primitives: `sdf_sphere`, `sdf_box`, `sdf_capped_cone`, `sdf_cylinder`, `sdf_torus`, `sdf_rounded_box`, `sdf_capsule`, `sdf_ellipsoid`, `sdf_rounded_cylinder`.
 
-Boolean operations on SDF distance values. Sharp variants use min/max; smooth variants blend with a smoothing radius `k`.
+### CSG Operations
 
-| Function | Operation |
-|---|---|
-| `union(d1, d2)` | A ∪ B — minimum of two distances |
-| `intersection(d1, d2)` | A ∩ B — maximum of two distances |
-| `difference(d1, d2)` | A \ B — subtracts B from A |
-| `smooth_union(d1, d2, k)` | Blended union with radius `k` |
-| `smooth_intersection(d1, d2, k)` | Blended intersection with radius `k` |
-| `smooth_difference(d1, d2, k)` | Blended difference with radius `k` |
+**Sharp CSG** — exact min/max operations:
 
 ```rust
-use crusst::primitives::sdf_sphere;
-use crusst::csg::smooth_union;
-use nalgebra::Vector3;
+use crusst::builder::Shape;
 
-let d1 = sdf_sphere(Vector3::zeros(), Vector3::new(-1.0, 0.0, 0.0), 2.0);
-let d2 = sdf_sphere(Vector3::zeros(), Vector3::new(1.0, 0.0, 0.0), 2.0);
-let blended = smooth_union(d1, d2, 0.5);
+let a = Shape::sphere(5.0).translate(-2.0, 0.0, 0.0);
+let b = Shape::sphere(5.0).translate(2.0, 0.0, 0.0);
+
+let union = a.clone().union(b.clone());        // A ∪ B
+let inter = a.clone().intersect(b.clone());    // A ∩ B
+let diff  = a.subtract(b);                     // A \ B
 ```
 
-### `shape` — Composable Shape Objects
-
-The `Sdf` trait provides an object-oriented interface for building shape trees. All shapes implement `Send + Sync` for safe parallel evaluation.
-
-**Trait:**
+**Smooth CSG** — polynomial blending with radius `k`:
 
 ```rust
-pub trait Sdf: Send + Sync {
-    fn evaluate(&self, point: Vector3<f64>) -> f64;
-}
+let smooth = a.smooth_union(b, 1.0);  // blended with k=1.0
 ```
 
-**Shapes:**
+The smoothing radius `k` controls how far from the intersection the blend extends. Larger values create more gradual transitions.
 
-| Type | Description |
-|---|---|
-| `Sphere` | Sphere defined by center and radius |
-| `Box3` | Axis-aligned box defined by center and half-extents |
-| `CappedCone` | Cone frustum between two endpoints with independent radii |
-| `HalfSpace` | Infinite half-space defined by a normal and offset |
-| `Union<A, B>` | Boolean union of two shapes |
-| `Intersection<A, B>` | Boolean intersection of two shapes |
-| `Difference<A, B>` | Boolean difference (A minus B) |
-
-Shapes compose naturally via generics:
+### Transforms
 
 ```rust
-use crusst::shape::{Sphere, Difference, Sdf};
-use nalgebra::Vector3;
+use crusst::builder::Shape;
+use std::f64::consts::PI;
 
-let outer = Sphere::new(Vector3::zeros(), 5.0);
-let inner = Sphere::new(Vector3::zeros(), 3.0);
-let shell = Difference::new(outer, inner);
-
-// Point at radius 4 is between the two spheres → inside the shell
-assert!(shell.evaluate(Vector3::new(4.0, 0.0, 0.0)) < 0.0);
-
-// Point at the origin is inside the inner sphere → outside the shell
-assert!(shell.evaluate(Vector3::zeros()) > 0.0);
+let shape = Shape::box3(5.0, 2.0, 3.0)
+    .translate(10.0, 0.0, 0.0)
+    .rotate_z(PI / 4.0)        // 45° around Z
+    .scale(2.0)                 // uniform scale
+    .mirror_x()                 // reflect across YZ plane
+    .shell(0.5)                 // hollow with wall thickness 0.5
+    .round(0.2);                // offset the surface inward by 0.2
 ```
 
-### `path` — Parametric Paths
+| Method | Effect |
+|--------|--------|
+| `translate(x, y, z)` | Rigid translation |
+| `rotate_x/y/z(angle)` | Rotation around axis (radians) |
+| `scale(factor)` | Uniform scaling |
+| `mirror_x/y/z()` | Reflection across a coordinate plane |
+| `shell(thickness)` | Hollow shell (onion-skin) |
+| `round(radius)` | Offset rounding |
 
-Paths are parametric curves over `t ∈ [0, 1]` used by the transport module to sweep shapes through space.
+### Fillet & Chamfer System
 
-**Trait:**
+Crusst provides a targeted fillet/chamfer system that applies blend profiles to specific edges of a shape. The system uses a **feature ID** mechanism to identify faces and edges on primitives, then applies blend operations via multi-face Lp norm generalization.
 
-```rust
-pub trait Path: Send + Sync {
-    fn point(&self, t: f64) -> Vector3<f64>;
-    fn tangent(&self, t: f64) -> Vector3<f64>;
-}
-```
+**10 blend profiles** spanning G0 through G3 continuity:
 
-**Path types:**
+| Profile | Constructor | Continuity | Shape |
+|---------|-------------|------------|-------|
+| Equal Chamfer | `blend::equal_chamfer(d)` | G0 | 45° flat bevel |
+| Two-Distance Chamfer | `blend::two_dist_chamfer(d1, d2)` | G0 | Asymmetric flat bevel |
+| Angle Chamfer | `blend::angle_chamfer(d, θ)` | G0 | Angled flat bevel |
+| G1 Bezier | `blend::g1(r)` | G1 | Cubic Bezier quarter-circle |
+| G2 Circular | `blend::g2(r)` | G2 | Exact circular arc (L2 norm) |
+| Chord | `blend::chord(c)` | G2 | Arc specified by chord length |
+| G3 Squircle | `blend::g3(r)` | G3 | Superellipse (L4 norm) |
+| Parabolic | `blend::parabolic(r)` | G3 | Sin-based curvature (L3 norm) |
+| Hyperbolic | `blend::hyperbolic(r, a)` | G3 | Sinh-based curvature (L6 norm) |
+| Cycloidal | `blend::cycloidal(r)` | G3 | Cycloid approximation (L1.5 norm) |
 
-| Type | Description | Parameters |
-|---|---|---|
-| `LinePath` | Straight line between two points | `start`, `end` |
-| `HelixPath` | Circular helix rising along the Z axis | `radius`, `pitch`, `turns` |
-| `SpiralPath` | Generalized spiral with dynamic radius and height | `radius_fn(t)`, `height_fn(t)`, `turns` |
-
-```rust
-use crusst::path::{HelixPath, Path};
-
-let helix = HelixPath::new(
-    10.0, // radius
-    5.0,  // pitch (vertical rise per turn)
-    3.0,  // number of turns
-);
-let start = helix.point(0.0);  // (10, 0, 0)
-let end = helix.point(1.0);    // back to x=10, z = pitch * turns = 15
-```
-
-`SpiralPath` accepts closures for full control over the curve shape:
+**Feature targeting** with the `ft()` builder:
 
 ```rust
-use crusst::path::SpiralPath;
+use crusst::builder::Shape;
+use crusst::blend;
+use crusst::feature::ft;
 
-// A horn-like spiral: radius shrinks from 20 to 6, height rises to 40
-let spiral = SpiralPath::new(
-    |t| 20.0 * (1.0 - t * 0.7), // radius_fn
-    |t| 40.0 * t,                // height_fn
-    2.0,                          // turns
+let box_shape = Shape::box3(5.0, 5.0, 5.0);
+
+// Fillet all edges with a G2 circular arc, radius 1.0
+let filleted = box_shape.fillet(blend::g2(1.0), vec![ft(0, 0).all_edges()]);
+
+// Chamfer only the top 4 edges (edges 4-7 on a Box3)
+let chamfered = box_shape.chamfer(
+    blend::equal_chamfer(0.8),
+    vec![ft(0, 0).edges(&[4, 5, 6, 7])],
 );
 ```
 
-### `frame` — Frenet Frames
+**How it works:** The fillet evaluation collects the face indices adjacent to each targeted edge, then computes a multi-face Lp blend:
 
-`FrenetFrame` computes a local coordinate system (tangent, normal, binormal) along a path. Used internally by the transport module but available for custom sweep operations.
-
-```rust
-use crusst::frame::FrenetFrame;
-use nalgebra::Vector3;
-
-let frame = FrenetFrame::from_tangent(Vector3::new(0.0, 0.0, 1.0));
-let rotation = frame.to_matrix(); // 3x3 rotation: local → world
+```
+blend = (Σ clamp(dᵢ + r)^p)^(1/p) − r
 ```
 
-### `transport` — Shape Sweeping (Eigenforms)
+where `dᵢ` are signed distances to each face, `r` is the blend radius, and `p` is the Lp exponent (2 for G2/circular, 4 for G3, etc.). Higher-order profiles (G3, parabolic, hyperbolic) use softplus clamping instead of hard `max(0, ·)` to curve the face surfaces smoothly into the blend zone.
 
-Transport operations sweep a circular cross-section along a path, producing increasingly complex geometry. Each "order" adds a degree of freedom:
+### Round & Chamfer CSG
 
-| Order | Function | Description | Eigenform |
-|---|---|---|---|
-| 0 | `order0(section)` | Identity — the shape *is* the cross-section | Sphere |
-| 1 | `order1(path, radius, scale_fn, samples)` | Rigid sweep with scaling along a path | Cone |
-| 2 | `order2(path, radius, samples)` | Tube sweep with frame transport | Helix |
-| 3 | `order3(path, radius, scale_fn, twist_fn, samples)` | Full morphing: scale + twist along path | Horn |
-
-All transport functions return a `TransportShape` that implements `Sdf`, so the result can be meshed, composed with CSG, or nested in further operations.
+Global round and chamfer operations apply a blend at all CSG boundaries:
 
 ```rust
-use crusst::shape::Sphere;
+use crusst::builder::Shape;
+
+let a = Shape::sphere(5.0).translate(-3.0, 0.0, 0.0);
+let b = Shape::sphere(5.0).translate(3.0, 0.0, 0.0);
+
+let round_u = a.clone().round_union(b.clone(), 1.0);     // filleted union
+let round_i = a.clone().round_intersect(b.clone(), 1.0);  // filleted intersection
+let round_d = a.clone().round_subtract(b.clone(), 1.0);   // filleted subtraction
+
+let chamfer_u = a.chamfer_union(b, 1.0);                  // chamfered union
+```
+
+These use the inscribed-circle (round) or 45° flat (chamfer) blend formulas from the `csg` module.
+
+### Meshing
+
+Crusst extracts triangle meshes via **adaptive dual contouring** — a feature-preserving isosurface algorithm that places vertices at optimal positions using a Quadratic Error Function (QEF) solver.
+
+```rust
+use crusst::builder::Shape;
+use crusst::types::MeshSettings;
+
+let shape = Shape::sphere(5.0);
+
+// Default settings: max_depth=8, min_depth=6, edge_tolerance=1e-6
+let mesh = shape.mesh(MeshSettings::default());
+
+// Custom settings for higher resolution
+let mesh_hq = shape.mesh(MeshSettings {
+    max_depth: 9,
+    min_depth: 7,
+    edge_tolerance: 1e-7,
+});
+
+println!("Triangles: {}", mesh.indices.len() / 3);
+println!("Vertices: {}", mesh.vertices.len());
+```
+
+The pipeline:
+1. **Adaptive octree** — subdivides only near the surface, using interval arithmetic to prune cells that are entirely inside or outside
+2. **Edge crossing detection** — bisects cell edges to find surface crossings within `edge_tolerance`
+3. **QEF vertex placement** — solves a least-squares system from crossing positions and SDF gradients to place each vertex optimally (preserves sharp features)
+4. **Face generation** — connects QEF vertices across shared sign-changing edges into triangles
+
+The compatibility function `extract_mesh(sdf, bbox_min, bbox_max, resolution)` accepts any `&dyn Sdf` and converts the resolution count to an octree depth.
+
+### Export
+
+Three export formats:
+
+```rust
+shape.export_obj("output.obj").unwrap();   // Wavefront OBJ (indexed, shared vertices)
+shape.export_stl("output.stl").unwrap();   // Binary STL
+shape.export_step("output.step").unwrap(); // STEP AP203 (smart tiered)
+```
+
+**STEP export** uses a smart tiered system:
+- **Tier 1 (Exact):** Spheres → `SPHERICAL_SURFACE`, boxes → 6 `PLANE`s, cylinders → `CYLINDRICAL_SURFACE`. Rigid transforms are unwrapped and applied analytically.
+- **Tier 3 (Tessellated):** Everything else (booleans, smooth ops, fillets) is meshed and exported as tessellated `ADVANCED_FACE` geometry.
+
+The `classify(node)` function walks the DAG to determine which tier applies.
+
+### Voxelization
+
+Convert any shape to a regular 3D grid of SDF samples:
+
+```rust
+let grid = shape.voxelize(0.5); // 0.5-unit voxel size
+println!("Resolution: {:?}", grid.resolution); // [nx, ny, nz]
+println!("Origin: {:?}", grid.origin);
+let value = grid.data[grid.index_at(some_world_point)];
+```
+
+Voxelization is parallelized with rayon. The resulting `VoxelGrid` stores `f32` distance values in row-major `[x][y][z]` order.
+
+### Parametric Paths & Transport
+
+The transport system sweeps a circular cross-section along a parametric path, producing SDF shapes of increasing complexity:
+
+| Order | Eigenform | Description |
+|-------|-----------|-------------|
+| 0 | Sphere | Identity — the shape is the cross-section |
+| 1 | Cone | Rigid sweep with scaling along a path |
+| 2 | Helix tube | Frame transport along a curved path |
+| 3 | Horn | Full morphing: scale + twist along path |
+
+```rust
 use crusst::path::{LinePath, HelixPath};
-use crusst::transport::{order0, order1, order2};
-use crusst::mesh::extract_mesh;
+use crusst::transport::{order1, order2};
 use nalgebra::Vector3;
 
-// Order 0: Just a sphere
-let sphere = order0(Sphere::new(Vector3::zeros(), 10.0));
-
-// Order 1: Cone — circle swept along a line, tapering to a point
+// Cone: circle tapers to a point along a line
 let path = LinePath::new(Vector3::zeros(), Vector3::new(0.0, 0.0, 30.0));
 let cone = order1(path, 12.0, |t| 1.0 - t, 128);
 
-// Order 2: Helix tube — circle swept along a helical path
+// Helix tube: circle swept along a helical path
 let helix = HelixPath::new(15.0, 8.0, 3.0);
 let tube = order2(helix, 2.5, 256);
-let mesh = extract_mesh(
-    &tube,
-    Vector3::new(-20.0, -20.0, -4.0),
-    Vector3::new(20.0, 20.0, 28.0),
-    100,
-);
 ```
 
-The `samples` parameter controls how many discrete points along the path are evaluated during the sweep. Higher values produce smoother surfaces but are more expensive. A value of 256 works well for most cases.
+**Path types:**
+- `LinePath` — straight line between two points
+- `HelixPath` — constant-curvature helix (radius, pitch, turns)
+- `SpiralPath` — closure-driven spiral with variable radius and height
 
-### `mesh` — Mesh Extraction
-
-`extract_mesh` runs marching cubes over a bounding box at the given grid resolution, producing a `TriangleMesh` with per-vertex normals computed via central differences.
-
-```rust
-pub struct TriangleMesh {
-    pub vertices: Vec<Vector3<f64>>,
-    pub normals: Vec<Vector3<f64>>,
-    pub indices: Vec<u32>,
-}
-```
-
-`TriangleMesh::to_binary()` serializes the mesh to a compact binary format for WebSocket/GPU transmission:
-
-```
-[vertex_count: u32 LE]
-[vertices: f32 × 3 × vertex_count LE]
-[normals: f32 × 3 × vertex_count LE]
-[index_count: u32 LE]
-[indices: u32 × index_count LE]
-```
-
-Resolution determines the number of grid cells per axis. Higher resolution = more triangles and finer detail. Typical values:
-
-| Resolution | Grid Points | Use Case |
-|---|---|---|
-| 32 | ~33K | Fast preview |
-| 64 | ~262K | Development |
-| 100 | ~1M | Production |
-| 160 | ~4M | High quality |
-| 200 | ~8M | Maximum detail |
-
-Mesh extraction is parallelized with [`rayon`](https://docs.rs/rayon) for multi-core performance.
-
-### `export` — STL Export
-
-`write_stl` writes a binary STL file from a `TriangleMesh`:
-
-```rust
-use crusst::export::write_stl;
-
-write_stl(&mesh, "output.stl").unwrap();
-```
-
-The output follows the standard 80-byte header + triangle array binary STL format, compatible with all major CAD and 3D printing software.
+All transport results implement `Sdf` and can be composed, meshed, or exported like any other shape.
 
 ## Architecture
 
 ```
 crusst
-├── primitives     Functional SDF distance functions
-├── csg            Boolean operations on distance values
-├── shape          Sdf trait + composable shape structs
-├── path           Parametric curves (Line, Helix, Spiral)
-├── frame          Frenet frame computation
-├── transport      Sweep operations (Orders 0–3)
-├── mesh           Marching cubes extraction + binary serialization
-└── export         Binary STL file writing
+├── primitives          9 functional SDF distance functions
+├── csg                 12 scalar CSG operations (sharp, smooth, round, chamfer)
+├── shape               Sdf/Sdf2d traits + generic composable shape structs
+│   ├── primitives      10 primitive shapes (Sphere, Box3, Cylinder, ...)
+│   ├── csg             6 boolean/smooth operations (generic over Sdf)
+│   ├── transforms      6 spatial transforms (Translate, Rotate, Scale, Mirror, Shell, Round)
+│   └── 2d              2D primitives + Revolve/Extrude lifts
+├── dag                 SdfNode expression DAG
+│   ├── evaluate()      Point SDF evaluation
+│   ├── interval_evaluate()   Interval arithmetic (octree pruning)
+│   ├── gradient()      Analytical + central-difference gradients
+│   └── face/edge_info  Feature ID introspection for fillet targeting
+├── builder             Shape: fluent API wrapping Arc<SdfNode>
+├── blend               10 blend profiles (G0–G3) + Newton iteration solvers
+├── feature             Feature ID types (FaceInfo, EdgeInfo, FeatureTarget)
+├── octree              Adaptive octree with interval pruning
+├── qef                 QEF solver (SVD-based, mass-point regularized)
+├── dual_contouring     Mesh extraction: octree → edge crossings → QEF → triangles
+├── mesh                Compatibility layer (resolution → depth conversion)
+├── voxel               Regular SDF voxel grid (f32, rayon-parallel)
+├── path                Parametric paths (Line, Helix, Spiral)
+├── frame               Frenet frame computation
+├── transport           Sweep operations (Orders 0–3 eigenforms)
+├── export              Binary STL writer
+├── obj_export          Wavefront OBJ writer (indexed)
+└── step_export         STEP AP203 writer (exact BRep + tessellated fallback)
 ```
 
-The design separates **distance evaluation** (primitives, shapes) from **mesh generation** (marching cubes) and **file I/O** (export). This means you can use the SDF layer for ray marching, collision detection, or any other distance-field application without pulling in mesh dependencies.
+The design separates **distance evaluation** (primitives, shapes, DAG) from **mesh generation** (octree, dual contouring, QEF) and **file I/O** (export). The SDF layer can be used independently for ray marching, collision detection, or any other distance-field application.
+
+For detailed technical documentation, see:
+- **[Tutorial](docs/tutorial.md)** — step-by-step guide from first principles
+- **[Architecture Guide](docs/architecture.md)** — deep dive into the meshing pipeline, blend math, and DAG internals
 
 ## Dependencies
 
 | Crate | Version | Purpose |
-|---|---|---|
-| [`nalgebra`](https://nalgebra.org) | 0.33 | Linear algebra (`Vector3`, `Matrix3`) |
-| [`rayon`](https://docs.rs/rayon) | 1.10 | Parallel mesh extraction |
-| [`isosurface`](https://docs.rs/isosurface) | 0.1.0-alpha.0 | Marching cubes algorithm |
-| [`approx`](https://docs.rs/approx) | 0.5 | Floating-point test assertions (dev only) |
-
-## Math Library Interoperability (mint)
-
-Crusst uses [nalgebra](https://nalgebra.org) for all vector/matrix types. If your project uses a different math library ([glam](https://crates.io/crates/glam), [cgmath](https://crates.io/crates/cgmath), [ultraviolet](https://crates.io/crates/ultraviolet), etc.), enable the `mint` feature to convert between them seamlessly via the [mint](https://crates.io/crates/mint) interop standard:
-
-```toml
-[dependencies]
-crusst = { version = "0.1", features = ["mint"] }
-```
-
-With the feature enabled, nalgebra gains `From`/`Into` impls for `mint` types, so you can convert at your call sites:
-
-```rust
-use crusst::shape::Sphere;
-use nalgebra::Vector3;
-
-// glam → mint → nalgebra
-let glam_center = glam::DVec3::new(0.0, 0.0, 0.0);
-let center: Vector3<f64> = Vector3::from(mint::Vector3::from(glam_center));
-
-let sphere = Sphere::new(center, 5.0);
-```
-
-This forwards nalgebra's `convert-mint` feature — no extra dependencies are added to your build beyond what nalgebra already pulls in.
+|-------|---------|---------|
+| [`nalgebra`](https://nalgebra.org) | 0.33 | Linear algebra (`Vector3`, `Matrix3`, `Rotation3`, SVD) |
+| [`rayon`](https://docs.rs/rayon) | 1.10 | Parallel voxelization |
+| [`approx`](https://docs.rs/approx) | 0.5 | Floating-point assertions (dev only) |
+| [`tiny_http`](https://docs.rs/tiny_http) | 0.12 | HTTP server for the live viewer example (dev only) |
 
 ## License
 
