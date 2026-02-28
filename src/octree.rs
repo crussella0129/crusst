@@ -234,4 +234,105 @@ impl Octree {
             }
         }
     }
+
+    /// Enforce 2:1 balance constraint on the octree.
+    ///
+    /// After this call, no leaf cell has a face-neighbor that differs by more
+    /// than one depth level. This eliminates T-junctions in the dual contouring
+    /// mesh. Uses a work-queue approach: immutable scan finds violations, then
+    /// mutable pass subdivides. Repeats until no violations remain.
+    pub fn balance(&mut self, node: &SdfNode) {
+        loop {
+            let violations = self.find_balance_violations();
+            if violations.is_empty() {
+                break;
+            }
+            for target_bbox in violations {
+                Self::subdivide_at(&mut self.root, node, &target_bbox);
+            }
+        }
+    }
+
+    /// Scan all leaves and return the bboxes of coarser neighbors that violate 2:1.
+    fn find_balance_violations(&self) -> Vec<BBox3> {
+        let leaves = self.collect_all_leaves();
+        let mut targets = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        for cell in &leaves {
+            let half = cell.bbox.size() * 0.5;
+            let center = cell.bbox.center();
+            // Step just past the face (half-width + small nudge) to land in the
+            // immediate face-neighbor cell rather than overshooting into a more
+            // distant cell.
+            let eps = half.x * 1e-3;
+            let dx = half.x + eps;
+            let dy = half.y + eps;
+            let dz = half.z + eps;
+            let probes = [
+                center + Vector3::new(dx, 0.0, 0.0),
+                center - Vector3::new(dx, 0.0, 0.0),
+                center + Vector3::new(0.0, dy, 0.0),
+                center - Vector3::new(0.0, dy, 0.0),
+                center + Vector3::new(0.0, 0.0, dz),
+                center - Vector3::new(0.0, 0.0, dz),
+            ];
+            for probe in &probes {
+                if let Some(neighbor) = self.find_leaf_containing(*probe) {
+                    if neighbor.depth + 1 < cell.depth {
+                        // neighbor is too coarse — needs subdivision
+                        let key = (
+                            (neighbor.bbox.min.x * 1e9).round() as i64,
+                            (neighbor.bbox.min.y * 1e9).round() as i64,
+                            (neighbor.bbox.min.z * 1e9).round() as i64,
+                        );
+                        if seen.insert(key) {
+                            targets.push(neighbor.bbox);
+                        }
+                    }
+                }
+            }
+        }
+        targets
+    }
+
+    /// Subdivide the leaf cell at the given bbox for balance purposes.
+    /// This is NOT the build subdivision — no interval pruning, no recursion.
+    /// Just evaluates corners and creates 8 leaf children.
+    fn subdivide_at(cell: &mut OctreeCell, node: &SdfNode, target: &BBox3) {
+        if cell.is_leaf() {
+            // Is this the cell we're looking for?
+            let eps = cell.bbox.size().x * 1e-6;
+            if (cell.bbox.min - target.min).norm() < eps
+                && (cell.bbox.max - target.max).norm() < eps
+            {
+                let octants = cell.bbox.octants();
+                let children: [OctreeCell; 8] = std::array::from_fn(|i| {
+                    let child_bbox = octants[i];
+                    let corner_pts = child_bbox.corners();
+                    let mut corners = [0.0f64; 8];
+                    for (j, c) in corner_pts.iter().enumerate() {
+                        corners[j] = node.evaluate(*c);
+                    }
+                    OctreeCell {
+                        bbox: child_bbox,
+                        depth: cell.depth + 1,
+                        corners,
+                        children: None,
+                    }
+                });
+                cell.children = Some(Box::new(children));
+            }
+            return;
+        }
+        // Recurse into children to find the target
+        if let Some(ref mut children) = cell.children {
+            for child in children.iter_mut() {
+                if child.bbox.contains(target.center()) {
+                    Self::subdivide_at(child, node, target);
+                    return;
+                }
+            }
+        }
+    }
 }
