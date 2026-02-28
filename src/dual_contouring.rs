@@ -163,6 +163,9 @@ pub fn extract_mesh_adaptive(
         emit_fan(&sorted_indices, sign_positive_first, &mut indices);
     }
 
+    // Phase 3.5: Fix winding order using SDF gradient.
+    fix_winding(&vertices, &mut indices, node);
+
     // Phase 4: Compute per-vertex normals.
     let normals: Vec<Vector3<f64>> = vertices.iter().map(|v| node.gradient(*v)).collect();
 
@@ -267,6 +270,9 @@ pub fn extract_mesh_from_sdf(sdf: &dyn Sdf, bbox: &BBox3, settings: &MeshSetting
         let sorted_indices = sort_vertices_around_edge(ek, &vert_indices, &vertices);
         emit_fan(&sorted_indices, sign_positive_first, &mut indices);
     }
+
+    // Phase 3.5: Fix winding order using SDF gradient (central differences).
+    fix_winding_sdf(&vertices, &mut indices, sdf);
 
     // Phase 4: Normals — prefer analytical gradients, fall back to central differences.
     let normals: Vec<Vector3<f64>> = vertices
@@ -638,6 +644,53 @@ fn emit_fan(sorted: &[u32], sign_positive_first: bool, indices: &mut Vec<u32>) {
             indices.push(sorted[0]);
             indices.push(sorted[i + 1]);
             indices.push(sorted[i]);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Winding fix — ensure all face normals agree with SDF gradient
+// ---------------------------------------------------------------------------
+
+/// Fix triangle winding so all face normals point outward (agree with SDF gradient).
+///
+/// For each triangle, computes the face normal via cross product and compares
+/// it against the SDF gradient at the centroid. If they disagree, the triangle
+/// vertices are swapped to flip the winding.
+fn fix_winding(vertices: &[Vector3<f64>], indices: &mut [u32], node: &SdfNode) {
+    for tri in indices.chunks_exact_mut(3) {
+        let v0 = vertices[tri[0] as usize];
+        let v1 = vertices[tri[1] as usize];
+        let v2 = vertices[tri[2] as usize];
+        let face_normal = (v1 - v0).cross(&(v2 - v0));
+        // Skip degenerate triangles
+        if face_normal.norm_squared() < 1e-30 {
+            continue;
+        }
+        let centroid = (v0 + v1 + v2) / 3.0;
+        let sdf_gradient = node.gradient(centroid);
+        if face_normal.dot(&sdf_gradient) < 0.0 {
+            tri.swap(1, 2);
+        }
+    }
+}
+
+/// Fix winding for meshes built from &dyn Sdf (uses gradient or central differences).
+fn fix_winding_sdf(vertices: &[Vector3<f64>], indices: &mut [u32], sdf: &dyn Sdf) {
+    for tri in indices.chunks_exact_mut(3) {
+        let v0 = vertices[tri[0] as usize];
+        let v1 = vertices[tri[1] as usize];
+        let v2 = vertices[tri[2] as usize];
+        let face_normal = (v1 - v0).cross(&(v2 - v0));
+        if face_normal.norm_squared() < 1e-30 {
+            continue;
+        }
+        let centroid = (v0 + v1 + v2) / 3.0;
+        let sdf_gradient = sdf
+            .gradient(centroid)
+            .unwrap_or_else(|| central_diff_gradient_sdf(sdf, centroid));
+        if face_normal.dot(&sdf_gradient) < 0.0 {
+            tri.swap(1, 2);
         }
     }
 }
