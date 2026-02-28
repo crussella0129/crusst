@@ -39,8 +39,9 @@ pub fn extract_mesh_adaptive(
     bbox: &BBox3,
     settings: &MeshSettings,
 ) -> TriangleMesh {
-    // Phase 1: Build the adaptive octree.
-    let tree = Octree::build(node, bbox, settings);
+    // Phase 1: Build the adaptive octree and enforce 2:1 balance.
+    let mut tree = Octree::build(node, bbox, settings);
+    tree.balance(node);
 
     // Phase 2: Collect surface leaf cells and place QEF vertices.
     let surface_cells = tree.surface_cells();
