@@ -369,17 +369,18 @@ impl SdfNode {
                         face_indices.insert(edge.face_b);
 
                         // Per-edge Newton-iteration blend (G1, Cycloidal, Chamfer).
-                        if !lp_only {
-                            if let (Some(d1), Some(d2)) = (
+                        if !lp_only
+                            && let (Some(d1), Some(d2)) = (
                                 inner.face_distance(point, edge.face_a),
                                 inner.face_distance(point, edge.face_b),
-                            ) {
-                                if d1 > -r && d2 > -r && d1 < r && d2 < r {
-                                    let blended =
-                                        crate::blend::blend_intersection(d1, d2, profile);
-                                    result = result.max(blended);
-                                }
-                            }
+                            )
+                            && d1 > -r
+                            && d2 > -r
+                            && d1 < r
+                            && d2 < r
+                        {
+                            let blended = crate::blend::blend_intersection(d1, d2, profile);
+                            result = result.max(blended);
                         }
                     }
                 }
@@ -714,12 +715,8 @@ impl SdfNode {
             | SdfNode::RoundedCylinder { .. } => central_diff_gradient(self, point),
 
             // -- CSG -------------------------------------------------------
-            SdfNode::Union(a, b) => {
-                csg_gradient_min(a, b, point)
-            }
-            SdfNode::Intersection(a, b) => {
-                csg_gradient_max(a, b, point)
-            }
+            SdfNode::Union(a, b) => csg_gradient_min(a, b, point),
+            SdfNode::Intersection(a, b) => csg_gradient_max(a, b, point),
             SdfNode::Difference(a, b) => {
                 // difference = max(a, -b), so negate b's gradient
                 let da = a.evaluate(point);

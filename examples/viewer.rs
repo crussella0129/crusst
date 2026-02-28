@@ -470,8 +470,7 @@ fn generate_models(dir: &PathBuf) {
         // ─── Rotated union (builder API — analytical gradients for clean edges) ───
         (
             "17b_rotated_union",
-            Shape::box3(12.0, 2.0, 2.0)
-                .union(Shape::box3(12.0, 2.0, 2.0).rotate_z(PI / 4.0)),
+            Shape::box3(12.0, 2.0, 2.0).union(Shape::box3(12.0, 2.0, 2.0).rotate_z(PI / 4.0)),
         ),
         // ─── Profile comparison series: each profile on the same 5×5×5 box ───
         // G1 tangent-continuous fillet
