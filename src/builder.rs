@@ -769,10 +769,7 @@ impl Shape {
     /// Extract a triangle mesh using adaptive dual contouring.
     pub fn mesh(&self, settings: MeshSettings) -> TriangleMesh {
         let bbox = self.bounding_box();
-        // Expand bbox slightly to avoid clipping surface cells at the boundary.
-        let pad = bbox.size() * 0.05;
-        let padded = BBox3::new(bbox.min - pad, bbox.max + pad);
-        extract_mesh_adaptive(&self.node, &padded, &settings)
+        extract_mesh_adaptive(&self.node, &bbox, &settings)
     }
 }
 

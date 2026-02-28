@@ -39,8 +39,23 @@ pub fn extract_mesh_adaptive(
     bbox: &BBox3,
     settings: &MeshSettings,
 ) -> TriangleMesh {
+    // Pad the bounding box to guarantee the surface is fully contained.
+    // Use the larger of 5% of bbox size or 2 cells at the finest resolution.
+    // This prevents boundary edges (edges with < 3 cells) that create holes.
+    let bbox_size = bbox.size();
+    let cell_size = bbox_size.x.max(bbox_size.y).max(bbox_size.z)
+        / (1u64 << settings.max_depth) as f64;
+    let min_pad = cell_size * 2.0;
+    let pct_pad = bbox_size * 0.05;
+    let pad = Vector3::new(
+        pct_pad.x.max(min_pad),
+        pct_pad.y.max(min_pad),
+        pct_pad.z.max(min_pad),
+    );
+    let padded = BBox3::new(bbox.min - pad, bbox.max + pad);
+
     // Phase 1: Build the adaptive octree and enforce 2:1 balance.
-    let mut tree = Octree::build(node, bbox, settings);
+    let mut tree = Octree::build(node, &padded, settings);
     tree.balance(node);
 
     // Phase 2: Collect surface leaf cells and place QEF vertices.
