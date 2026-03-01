@@ -1,6 +1,6 @@
-# Crusst — SDF Geometry Kernel in Rust
+# Crusst — B-Rep Geometry Kernel in Rust
 
-A standalone **Signed Distance Function (SDF)** geometry kernel written in pure Rust. Crusst provides composable shape primitives, constructive solid geometry, targeted fillet/chamfer blending with continuity control (G0–G3), adaptive dual contouring mesh extraction, parametric path sweeping, and multi-format export — everything needed to go from mathematical shape definition to watertight triangle mesh.
+A pure Rust **Boundary Representation (B-Rep)** geometry kernel. Crusst stores shapes as exact mathematical surfaces with explicit topology — vertices, edges, faces, shells, and solids — enabling precise CAD operations, adaptive tessellation, and lossless STEP export.
 
 ## Table of Contents
 
@@ -10,16 +10,13 @@ A standalone **Signed Distance Function (SDF)** geometry kernel written in pure 
 - [API Overview](#api-overview)
   - [Builder API](#builder-api)
   - [Primitives](#primitives)
-  - [CSG Operations](#csg-operations)
   - [Transforms](#transforms)
-  - [Fillet & Chamfer System](#fillet--chamfer-system)
-  - [Round & Chamfer CSG](#round--chamfer-csg)
-  - [Meshing](#meshing)
+  - [Profiles & Sketch Operations](#profiles--sketch-operations)
+  - [Tessellation](#tessellation)
   - [Export](#export)
-  - [Voxelization](#voxelization)
-  - [Parametric Paths & Transport](#parametric-paths--transport)
+  - [Topology Validation](#topology-validation)
 - [Architecture](#architecture)
-- [Documentation](#documentation)
+- [Interactive Viewer](#interactive-viewer)
 - [Dependencies](#dependencies)
 - [License](#license)
 
@@ -27,175 +24,141 @@ A standalone **Signed Distance Function (SDF)** geometry kernel written in pure 
 
 ```toml
 [dependencies]
-crusst = { git = "https://github.com/crussella0129/crusst.git", branch = "v1.1" }
+crusst = { git = "https://github.com/crussella0129/crusst.git", branch = "v1.4" }
 ```
 
 All spatial types use `nalgebra::Vector3<f64>`. Enable the `mint` feature for interoperability with glam, cgmath, or ultraviolet:
 
 ```toml
-crusst = { git = "https://github.com/crussella0129/crusst.git", branch = "v1.1", features = ["mint"] }
+crusst = { git = "https://github.com/crussella0129/crusst.git", branch = "v1.4", features = ["mint"] }
 ```
 
 ## Quick Start
 
-### Evaluate a shape
+### Create and mesh a shape
 
 ```rust
 use crusst::builder::Shape;
+use crusst::types::TessSettings;
 
-let sphere = Shape::sphere(5.0);
-assert!(sphere.distance([0.0, 0.0, 0.0].into()) < 0.0);       // inside
-assert!(sphere.distance([5.0, 0.0, 0.0].into()).abs() < 1e-6); // on surface
-assert!(sphere.distance([10.0, 0.0, 0.0].into()) > 0.0);       // outside
+let mesh = Shape::sphere(5.0)
+    .translate(10.0, 0.0, 0.0)
+    .auto_mesh();
+
+println!("Triangles: {}", mesh.indices.len() / 3);
+println!("Vertices: {}", mesh.vertices.len());
 ```
 
-### Boolean operations
+### Profile-based extrusion
 
 ```rust
 use crusst::builder::Shape;
+use crusst::profile::Profile;
 
-let base = Shape::box3(5.0, 5.0, 5.0);
-let hole = Shape::cylinder(2.0, 12.0).translate(0.0, 0.0, 0.0);
-let part = base.subtract(hole);
+let bracket = Shape::extrude(&Profile::rect(10.0, 4.0), 20.0)
+    .translate(0.0, 0.0, -10.0);
 ```
 
-### Fillet edges
+### Export to multiple formats
 
 ```rust
 use crusst::builder::Shape;
-use crusst::blend;
-use crusst::feature::ft;
+use crusst::types::TessSettings;
+use std::fs::File;
 
-let box_shape = Shape::box3(5.0, 5.0, 5.0);
-let filleted = box_shape.fillet(blend::g2(1.0), vec![ft(0, 0).all_edges()]);
-```
+let shape = Shape::cylinder(3.0, 10.0);
+let settings = TessSettings::default();
 
-### Mesh and export
+// Tessellation-based formats
+shape.write_stl(&settings, &mut File::create("part.stl").unwrap()).unwrap();
+shape.write_obj(&settings, &mut File::create("part.obj").unwrap()).unwrap();
+shape.write_3mf(&settings, &mut File::create("part.3mf").unwrap()).unwrap();
 
-```rust
-use crusst::builder::Shape;
-use crusst::types::MeshSettings;
-
-let shape = Shape::sphere(5.0);
-let mesh = shape.mesh(MeshSettings::default());
-
-shape.export_obj("sphere.obj").unwrap();
-shape.export_stl("sphere.stl").unwrap();
-shape.export_step("sphere.step").unwrap();
+// Exact B-Rep geometry (no tessellation)
+shape.write_step(&mut File::create("part.step").unwrap()).unwrap();
 ```
 
 ## Core Concepts
 
-### Signed Distance Functions
+### Boundary Representation
 
-A **signed distance function** (SDF) maps every point in 3D space to a scalar value representing the shortest distance to the nearest surface:
+A B-Rep kernel represents solids as a hierarchy of topological entities, each carrying exact mathematical geometry:
 
-| Region | SDF value | Convention |
-|--------|-----------|------------|
-| Inside the solid | Negative | `f(p) < 0` |
-| On the surface | Zero | `f(p) = 0` |
-| Outside the solid | Positive | `f(p) > 0` |
+| Entity | Geometry | Role |
+|--------|----------|------|
+| **Vertex** | `Point3` | Corner point of the solid |
+| **Edge** | `Curve3` (line, circle, ellipse, NURBS) | Boundary between two faces |
+| **CoEdge** | `Curve2` (parametric trim curve) | Oriented half-edge with face association |
+| **Wire** | Closed loop of CoEdges | Boundary loop of a face |
+| **Face** | `Surface` (plane, cylinder, sphere, ...) | Geometric surface patch |
+| **Shell** | Collection of faces | Closed surface envelope |
+| **Solid** | Outer shell + optional inner shells | Watertight volume |
 
-SDFs compose algebraically: `union(A, B) = min(A, B)`, `intersection(A, B) = max(A, B)`, `difference(A, B) = max(A, -B)`. This makes complex geometry trivially constructible from simple primitives.
+This is the same architecture used by STEP, IGES, and professional CAD kernels — shapes are stored as the actual mathematical equations, not approximations.
 
-### The DAG
+### Surfaces
 
-Internally, Crusst represents geometry as a **directed acyclic graph** (`SdfNode`) of operations. Each node in the DAG is one of:
-- A **primitive** (sphere, box, cylinder, ...)
-- A **CSG operation** (union, intersection, difference, smooth variants)
-- A **transform** (translate, rotate, scale, mirror, shell)
-- A **targeted blend** (fillet or chamfer with a specific profile and feature targets)
+Six analytic surface types plus full NURBS support:
 
-The DAG enables three evaluation modes:
-1. **Point evaluation** — `f(p) → f64` for SDF queries
-2. **Interval evaluation** — `f([x₀,x₁]×[y₀,y₁]×[z₀,z₁]) → [lo, hi]` for conservative octree pruning
-3. **Gradient evaluation** — `∇f(p) → Vector3` for dual contouring vertex placement
+| Surface | Parametric Domain | Description |
+|---------|-------------------|-------------|
+| `Plane` | `(u, v) → origin + u·e1 + v·e2` | Infinite flat surface |
+| `Cylinder` | `(θ, h) → origin + R·cos(θ)·e1 + R·sin(θ)·e2 + h·axis` | Circular cylinder |
+| `Cone` | `(θ, h) → apex + h·(axis + tan(α)·(cos(θ)·e1 + sin(θ)·e2))` | Conical surface |
+| `Sphere` | `(θ, φ) → center + R·cos(φ)·cos(θ)·e1 + ...` | Sphere |
+| `Torus` | `(θ, φ) → center + (R + r·cos(φ))·cos(θ)·e1 + ...` | Ring torus |
+| `NurbsSurface` | de Boor evaluation | Freeform surface |
+
+All surfaces implement `evaluate(u, v) → Point3`, `normal(u, v) → Vector3`, `derivative_u/v`, and `min_curvature_radius()`.
+
+### NURBS Math
+
+The `nurbs` module provides the mathematical foundation:
+- **Cox-de Boor** basis function evaluation
+- **de Boor algorithm** for curve and surface point evaluation
+- **Knot operations** — span finding, knot insertion, multiplicity queries
+- **`NurbsCurve3`** and **`NurbsSurface`** structs with weighted control points
 
 ## API Overview
 
 ### Builder API
 
-The `Shape` struct is the primary user-facing API. It wraps an `Arc<SdfNode>` and provides a fluent interface for constructing, querying, and exporting geometry. Shapes are cheaply cloneable (shared ownership via `Arc`).
+The `Shape` struct wraps a `(TopoStore, SolidId)` pair and provides a fluent interface for constructing, transforming, and exporting geometry.
 
 ```rust
 use crusst::builder::Shape;
+use crusst::types::TessSettings;
 
-// Build a mounting bracket
-let base = Shape::box3(10.0, 2.0, 6.0);
-let hole = Shape::cylinder(1.5, 6.0).translate(3.0, 0.0, 0.0);
-let bracket = base
-    .subtract(hole.clone())
-    .subtract(hole.translate(-6.0, 0.0, 0.0))
-    .smooth_union(Shape::box3(2.0, 4.0, 6.0).translate(-4.0, 3.0, 0.0), 0.5);
+let bracket = Shape::box3(10.0, 2.0, 6.0)
+    .translate(0.0, 5.0, 0.0)
+    .rotate_z(std::f64::consts::FRAC_PI_4);
 
-bracket.export_obj("bracket.obj").unwrap();
+let mesh = bracket.auto_mesh();
+bracket.write_step(&mut std::fs::File::create("bracket.step").unwrap()).unwrap();
 ```
-
-**Primitive constructors:**
-
-| Method | Description |
-|--------|-------------|
-| `Shape::sphere(radius)` | Sphere at origin |
-| `Shape::box3(hx, hy, hz)` | Axis-aligned box (half-extents) |
-| `Shape::cylinder(radius, height)` | Y-axis cylinder |
-| `Shape::torus(major, minor)` | Torus in the XZ plane |
-| `Shape::capsule(a, b, radius)` | Sphere-swept line segment |
-| `Shape::capped_cone(a, b, ra, rb)` | Cone frustum between endpoints |
-| `Shape::rounded_box(hx, hy, hz, r)` | Box with uniform edge rounding |
-| `Shape::ellipsoid(rx, ry, rz)` | Axis-aligned ellipsoid |
-| `Shape::rounded_cylinder(r, rr, hh)` | Cylinder with rounded edges |
-| `Shape::half_space(normal, d)` | Infinite half-space |
 
 ### Primitives
 
-The `primitives` module provides low-level functional SDF distance functions that operate on raw `Vector3<f64>` values:
-
-```rust
-use crusst::primitives::{sdf_sphere, sdf_box, sdf_cylinder, sdf_torus};
-use nalgebra::Vector3;
-
-let d = sdf_sphere(Vector3::new(3.0, 0.0, 0.0), Vector3::zeros(), 1.0);
-assert!((d - 2.0).abs() < 1e-6); // distance 2 from a radius-1 sphere
-```
-
-All nine primitives: `sdf_sphere`, `sdf_box`, `sdf_capped_cone`, `sdf_cylinder`, `sdf_torus`, `sdf_rounded_box`, `sdf_capsule`, `sdf_ellipsoid`, `sdf_rounded_cylinder`.
-
-### CSG Operations
-
-**Sharp CSG** — exact min/max operations:
-
-```rust
-use crusst::builder::Shape;
-
-let a = Shape::sphere(5.0).translate(-2.0, 0.0, 0.0);
-let b = Shape::sphere(5.0).translate(2.0, 0.0, 0.0);
-
-let union = a.clone().union(b.clone());        // A ∪ B
-let inter = a.clone().intersect(b.clone());    // A ∩ B
-let diff  = a.subtract(b);                     // A \ B
-```
-
-**Smooth CSG** — polynomial blending with radius `k`:
-
-```rust
-let smooth = a.smooth_union(b, 1.0);  // blended with k=1.0
-```
-
-The smoothing radius `k` controls how far from the intersection the blend extends. Larger values create more gradual transitions.
+| Method | Description | Faces |
+|--------|-------------|-------|
+| `Shape::box3(hx, hy, hz)` | Axis-aligned box (half-extents) | 6 planar |
+| `Shape::sphere(radius)` | Sphere at origin | 1 spherical |
+| `Shape::cylinder(radius, height)` | Z-axis cylinder | 3 (barrel + 2 caps) |
+| `Shape::cone(r1, r2, height)` | Cone frustum on Z axis | 3 (conical + 2 caps) |
+| `Shape::torus(major_r, minor_r)` | Torus on Z axis | 1 toroidal |
+| `Shape::wedge(dx, dy, dz)` | Triangular prism | 5 planar |
+| `Shape::capsule(radius, height)` | Hemisphere-capped cylinder | 3 (barrel + 2 spherical caps) |
 
 ### Transforms
 
-```rust
-use crusst::builder::Shape;
-use std::f64::consts::PI;
+All transforms modify geometry in place (no lazy DAG — vertex positions and surface equations are updated directly):
 
+```rust
 let shape = Shape::box3(5.0, 2.0, 3.0)
     .translate(10.0, 0.0, 0.0)
-    .rotate_z(PI / 4.0)        // 45° around Z
-    .scale(2.0)                 // uniform scale
-    .mirror_x()                 // reflect across YZ plane
-    .shell(0.5)                 // hollow with wall thickness 0.5
-    .round(0.2);                // offset the surface inward by 0.2
+    .rotate_z(std::f64::consts::FRAC_PI_4)
+    .scale(2.0)
+    .mirror_x();
 ```
 
 | Method | Effect |
@@ -204,213 +167,176 @@ let shape = Shape::box3(5.0, 2.0, 3.0)
 | `rotate_x/y/z(angle)` | Rotation around axis (radians) |
 | `scale(factor)` | Uniform scaling |
 | `mirror_x/y/z()` | Reflection across a coordinate plane |
-| `shell(thickness)` | Hollow shell (onion-skin) |
-| `round(radius)` | Offset rounding |
 
-### Fillet & Chamfer System
+### Profiles & Sketch Operations
 
-Crusst provides a targeted fillet/chamfer system that applies blend profiles to specific edges of a shape. The system uses a **feature ID** mechanism to identify faces and edges on primitives, then applies blend operations via multi-face Lp norm generalization.
-
-**10 blend profiles** spanning G0 through G3 continuity:
-
-| Profile | Constructor | Continuity | Shape |
-|---------|-------------|------------|-------|
-| Equal Chamfer | `blend::equal_chamfer(d)` | G0 | 45° flat bevel |
-| Two-Distance Chamfer | `blend::two_dist_chamfer(d1, d2)` | G0 | Asymmetric flat bevel |
-| Angle Chamfer | `blend::angle_chamfer(d, θ)` | G0 | Angled flat bevel |
-| G1 Bezier | `blend::g1(r)` | G1 | Cubic Bezier quarter-circle |
-| G2 Circular | `blend::g2(r)` | G2 | Exact circular arc (L2 norm) |
-| Chord | `blend::chord(c)` | G2 | Arc specified by chord length |
-| G3 Squircle | `blend::g3(r)` | G3 | Superellipse (L4 norm) |
-| Parabolic | `blend::parabolic(r)` | G3 | Sin-based curvature (L3 norm) |
-| Hyperbolic | `blend::hyperbolic(r, a)` | G3 | Sinh-based curvature (L6 norm) |
-| Cycloidal | `blend::cycloidal(r)` | G3 | Cycloid approximation (L1.5 norm) |
-
-**Feature targeting** with the `ft()` builder:
+2D profiles define cross-sections for extrude and revolve operations:
 
 ```rust
 use crusst::builder::Shape;
-use crusst::blend;
-use crusst::feature::ft;
+use crusst::profile::Profile;
+use crusst::math::Point2;
 
-let box_shape = Shape::box3(5.0, 5.0, 5.0);
+// Built-in profiles
+let rect = Profile::rect(10.0, 4.0);
+let circle = Profile::circle(3.0);
 
-// Fillet all edges with a G2 circular arc, radius 1.0
-let filleted = box_shape.fillet(blend::g2(1.0), vec![ft(0, 0).all_edges()]);
+// Custom polygon
+let triangle = Profile::polygon(&[
+    Point2::new(0.0, 0.0),
+    Point2::new(4.0, 0.0),
+    Point2::new(2.0, 3.0),
+]);
 
-// Chamfer only the top 4 edges (edges 4-7 on a Box3)
-let chamfered = box_shape.chamfer(
-    blend::equal_chamfer(0.8),
-    vec![ft(0, 0).edges(&[4, 5, 6, 7])],
-);
+// Shape-generating operations
+let prism = Shape::extrude(&rect, 20.0);
+let donut = Shape::revolve(&circle, std::f64::consts::TAU);
 ```
 
-**How it works:** The fillet evaluation collects the face indices adjacent to each targeted edge, then computes a multi-face Lp blend:
+Profiles support line and arc segments. `Profile::evaluate(t)` returns points along the closed wire at normalized parameter `t ∈ [0, 1]`.
 
-```
-blend = (Σ clamp(dᵢ + r)^p)^(1/p) − r
-```
+### Tessellation
 
-where `dᵢ` are signed distances to each face, `r` is the blend radius, and `p` is the Lp exponent (2 for G2/circular, 4 for G3, etc.). Higher-order profiles (G3, parabolic, hyperbolic) use softplus clamping instead of hard `max(0, ·)` to curve the face surfaces smoothly into the blend zone.
-
-### Round & Chamfer CSG
-
-Global round and chamfer operations apply a blend at all CSG boundaries:
+Crusst uses **adaptive parametric tessellation** — each face is sampled in its `(u, v)` parameter space, and triangles are refined where the surface deviates from the linear approximation.
 
 ```rust
 use crusst::builder::Shape;
+use crusst::types::TessSettings;
 
-let a = Shape::sphere(5.0).translate(-3.0, 0.0, 0.0);
-let b = Shape::sphere(5.0).translate(3.0, 0.0, 0.0);
+let shape = Shape::torus(10.0, 3.0);
 
-let round_u = a.clone().round_union(b.clone(), 1.0);     // filleted union
-let round_i = a.clone().round_intersect(b.clone(), 1.0);  // filleted intersection
-let round_d = a.clone().round_subtract(b.clone(), 1.0);   // filleted subtraction
+// Auto-tuned settings (recommended)
+let mesh = shape.auto_mesh();
 
-let chamfer_u = a.chamfer_union(b, 1.0);                  // chamfered union
-```
-
-These use the inscribed-circle (round) or 45° flat (chamfer) blend formulas from the `csg` module.
-
-### Meshing
-
-Crusst extracts triangle meshes via **adaptive dual contouring** — a feature-preserving isosurface algorithm that places vertices at optimal positions using a Quadratic Error Function (QEF) solver.
-
-```rust
-use crusst::builder::Shape;
-use crusst::types::MeshSettings;
-
-let shape = Shape::sphere(5.0);
-
-// Default settings: max_depth=8, min_depth=6, edge_tolerance=1e-6
-let mesh = shape.mesh(MeshSettings::default());
-
-// Custom settings for higher resolution
-let mesh_hq = shape.mesh(MeshSettings {
-    max_depth: 9,
-    min_depth: 7,
-    edge_tolerance: 1e-7,
+// Manual settings
+let mesh = shape.mesh(&TessSettings {
+    chord_tolerance: 0.01,  // max deviation from true surface
+    max_edge_length: 5.0,   // max triangle edge length
+    min_subdivisions: 32,   // initial grid density per face
 });
-
-println!("Triangles: {}", mesh.indices.len() / 3);
-println!("Vertices: {}", mesh.vertices.len());
 ```
 
-The pipeline:
-1. **Adaptive octree** — subdivides only near the surface, using interval arithmetic to prune cells that are entirely inside or outside
-2. **Edge crossing detection** — bisects cell edges to find surface crossings within `edge_tolerance`
-3. **QEF vertex placement** — solves a least-squares system from crossing positions and SDF gradients to place each vertex optimally (preserves sharp features)
-4. **Face generation** — connects QEF vertices across shared sign-changing edges into triangles
+**Auto-tuning** computes tessellation parameters from the shape's actual surface curvature, not just its bounding box:
 
-The compatibility function `extract_mesh(sdf, bbox_min, bbox_max, resolution)` accepts any `&dyn Sdf` and converts the resolution count to an octree depth.
+- **Chord tolerance** = 0.3% of the minimum curvature radius across all faces
+- **Max edge length** = 10% of the bounding diagonal (loose safety net)
+- **Min subdivisions** = 32 for curved shapes, 4 for all-planar shapes
+
+This means a tall thin cylinder (R=2, H=50) gets the same quality as a squat one (R=2, H=2) — the tessellation tracks surface math, not spatial extent.
+
+**Pipeline:**
+1. Initial `n × n` grid in `(u, v)` space per face
+2. Up to 3 adaptive refinement passes — triangles split where chord deviation exceeds tolerance or edges exceed max length
+3. Analytical normals from `surface.normal(u, v)` — no gradient approximation
+4. Planar faces use ear-clipping (no over-tessellation of flat geometry)
 
 ### Export
 
-Three export formats:
+Four export formats, two strategies:
 
-```rust
-shape.export_obj("output.obj").unwrap();   // Wavefront OBJ (indexed, shared vertices)
-shape.export_stl("output.stl").unwrap();   // Binary STL
-shape.export_step("output.step").unwrap(); // STEP AP203 (smart tiered)
+| Format | Method | Strategy |
+|--------|--------|----------|
+| **STEP AP203** | `write_step(writer)` | Exact B-Rep geometry — surfaces, curves, topology map directly to STEP entities |
+| **STL** | `write_stl(settings, writer)` | Binary triangle mesh from tessellation |
+| **OBJ** | `write_obj(settings, writer)` | Wavefront text format with indexed vertices and normals |
+| **3MF** | `write_3mf(settings, writer)` | XML-based mesh with metadata |
+
+STEP export writes exact mathematical geometry — `Plane` becomes `PLANE`, `Sphere` becomes `SPHERICAL_SURFACE`, `Face` becomes `ADVANCED_FACE`, `Solid` becomes `MANIFOLD_SOLID_BREP`. No tessellation required, no precision loss.
+
+### Topology Validation
+
+Every primitive is validated against the genus-aware Euler formula:
+
+```
+V - E + F = 2 - 2g
 ```
 
-**STEP export** uses a smart tiered system:
-- **Tier 1 (Exact):** Spheres → `SPHERICAL_SURFACE`, boxes → 6 `PLANE`s, cylinders → `CYLINDRICAL_SURFACE`. Rigid transforms are unwrapped and applied analytically.
-- **Tier 3 (Tessellated):** Everything else (booleans, smooth ops, fillets) is meshed and exported as tessellated `ADVANCED_FACE` geometry.
-
-The `classify(node)` function walks the DAG to determine which tier applies.
-
-### Voxelization
-
-Convert any shape to a regular 3D grid of SDF samples:
+where `g` is the genus of the solid (0 for sphere-like, 1 for torus).
 
 ```rust
-let grid = shape.voxelize(0.5); // 0.5-unit voxel size
-println!("Resolution: {:?}", grid.resolution); // [nx, ny, nz]
-println!("Origin: {:?}", grid.origin);
-let value = grid.data[grid.index_at(some_world_point)];
+let shape = Shape::torus(10.0, 3.0);
+let result = shape.validate();
+assert!(result.is_valid());
 ```
 
-Voxelization is parallelized with rayon. The resulting `VoxelGrid` stores `f32` distance values in row-major `[x][y][z]` order.
-
-### Parametric Paths & Transport
-
-The transport system sweeps a circular cross-section along a parametric path, producing SDF shapes of increasing complexity:
-
-| Order | Eigenform | Description |
-|-------|-----------|-------------|
-| 0 | Sphere | Identity — the shape is the cross-section |
-| 1 | Cone | Rigid sweep with scaling along a path |
-| 2 | Helix tube | Frame transport along a curved path |
-| 3 | Horn | Full morphing: scale + twist along path |
-
-```rust
-use crusst::path::{LinePath, HelixPath};
-use crusst::transport::{order1, order2};
-use nalgebra::Vector3;
-
-// Cone: circle tapers to a point along a line
-let path = LinePath::new(Vector3::zeros(), Vector3::new(0.0, 0.0, 30.0));
-let cone = order1(path, 12.0, |t| 1.0 - t, 128);
-
-// Helix tube: circle swept along a helical path
-let helix = HelixPath::new(15.0, 8.0, 3.0);
-let tube = order2(helix, 2.5, 256);
-```
-
-**Path types:**
-- `LinePath` — straight line between two points
-- `HelixPath` — constant-curvature helix (radius, pitch, turns)
-- `SpiralPath` — closure-driven spiral with variable radius and height
-
-All transport results implement `Sdf` and can be composed, meshed, or exported like any other shape.
+Validation checks:
+- Euler characteristic matches genus
+- Every wire is closed (CoEdge chain loops back)
+- Every edge has exactly 2 CoEdges (manifold guarantee)
+- Vertex/edge/face counts are consistent
 
 ## Architecture
 
 ```
-crusst
-├── primitives          9 functional SDF distance functions
-├── csg                 12 scalar CSG operations (sharp, smooth, round, chamfer)
-├── shape               Sdf/Sdf2d traits + generic composable shape structs
-│   ├── primitives      10 primitive shapes (Sphere, Box3, Cylinder, ...)
-│   ├── csg             6 boolean/smooth operations (generic over Sdf)
-│   ├── transforms      6 spatial transforms (Translate, Rotate, Scale, Mirror, Shell, Round)
-│   └── 2d              2D primitives + Revolve/Extrude lifts
-├── dag                 SdfNode expression DAG
-│   ├── evaluate()      Point SDF evaluation
-│   ├── interval_evaluate()   Interval arithmetic (octree pruning)
-│   ├── gradient()      Analytical + central-difference gradients
-│   └── face/edge_info  Feature ID introspection for fillet targeting
-├── builder             Shape: fluent API wrapping Arc<SdfNode>
-├── blend               10 blend profiles (G0–G3) + Newton iteration solvers
-├── feature             Feature ID types (FaceInfo, EdgeInfo, FeatureTarget)
-├── octree              Adaptive octree with interval pruning
-├── qef                 QEF solver (SVD-based, mass-point regularized)
-├── dual_contouring     Mesh extraction: octree → edge crossings → QEF → triangles
-├── mesh                Compatibility layer (resolution → depth conversion)
-├── voxel               Regular SDF voxel grid (f32, rayon-parallel)
-├── path                Parametric paths (Line, Helix, Spiral)
-├── frame               Frenet frame computation
-├── transport           Sweep operations (Orders 0–3 eigenforms)
-├── export              Binary STL writer
-├── obj_export          Wavefront OBJ writer (indexed)
-└── step_export         STEP AP203 writer (exact BRep + tessellated fallback)
+crusst/src/
+├── math/              Linear algebra helpers (Point2, Point3, Vector2, Vector3)
+├── nurbs/             NURBS math (Cox-de Boor, de Boor, knot operations)
+│   ├── basis.rs       Basis function evaluation
+│   └── knot.rs        Knot span finding, insertion, multiplicity
+├── curve/             Curve3 enum (Line, Circle, Ellipse, NurbsCurve)
+│                      Curve2 enum for parametric trim curves (PCurves)
+├── surface/           Surface enum (Plane, Cylinder, Cone, Sphere, Torus, NURBS)
+│                      evaluate(), normal(), derivatives, min_curvature_radius()
+├── topo/              Arena-based topology (no Arc/Rc — typed indices into Vec<T>)
+│   ├── store.rs       TopoStore arena with add/get/mut accessors
+│   ├── types.rs       Vertex, Edge, CoEdge, Wire, Face, Shell, Solid
+│   └── validate.rs    Genus-aware Euler formula validation
+├── primitive/         Shape constructors → SolidId in a TopoStore
+│   ├── box3.rs        6 planar faces, 12 edges, 8 vertices
+│   ├── sphere.rs      1 spherical face with pole trim
+│   ├── cylinder.rs    Barrel + 2 circular caps
+│   ├── cone.rs        Conical frustum + 2 caps
+│   ├── torus.rs       1 toroidal face (genus 1)
+│   ├── wedge.rs       Triangular prism (5 faces)
+│   └── capsule.rs     Hemisphere-capped cylinder
+├── profile/           2D sketch profiles (line/arc segments)
+├── tessellate/        Adaptive parametric tessellation
+│   ├── mod.rs         Face dispatch (planar → ear-clip, curved → adaptive)
+│   └── adaptive.rs    Grid + refinement passes with chord deviation control
+├── builder.rs         Shape: fluent API over (TopoStore, SolidId)
+├── types.rs           TriangleMesh, BBox3, TessSettings (curvature-based auto-tuning)
+├── export/            Multi-format export
+│   ├── step.rs        STEP AP203 (exact B-Rep entities)
+│   ├── stl.rs         Binary STL
+│   ├── obj.rs         Wavefront OBJ with normals
+│   └── threemf.rs     3MF XML model
+├── ops/               Operations (fillet, chamfer, shell — stubs)
+└── boolean/           Boolean trait + stub (deferred — hardest part of any B-Rep kernel)
 ```
 
-The design separates **distance evaluation** (primitives, shapes, DAG) from **mesh generation** (octree, dual contouring, QEF) and **file I/O** (export). The SDF layer can be used independently for ray marching, collision detection, or any other distance-field application.
+**Key design decisions:**
 
-For detailed technical documentation, see:
-- **[Tutorial](docs/tutorial.md)** — step-by-step guide from first principles
-- **[Architecture Guide](docs/architecture.md)** — deep dive into the meshing pipeline, blend math, and DAG internals
+1. **Arena-based topology** — `TopoStore` holds `Vec<T>` per entity type, accessed via typed indices (`VertexId(usize)`, `EdgeId(usize)`, etc.). This avoids the `Arc`/`Rc` reference cycles inherent in topology's cyclic graph.
+
+2. **Geometry/topology separation** — Geometric carriers (curves, surfaces) are value types stored on topology entities. Topology handles adjacency and orientation. This maps directly to STEP entities.
+
+3. **Direct transforms** — Translations, rotations, and scales modify vertex positions and surface equations in place. No lazy evaluation DAG — what you see is what's stored.
+
+4. **Curvature-driven tessellation** — Quality is controlled by surface math (curvature radius), not bounding box size. A cylinder always looks smooth regardless of how tall it is.
+
+## Interactive Viewer
+
+The included viewer serves a gallery of shapes in browser via a local HTTP server:
+
+```bash
+cargo run --example viewer
+# Open http://localhost:8080 in your browser
+```
+
+Features:
+- Real-time 3D preview of all primitives with Three.js
+- Auto/manual tessellation toggle with live parameter controls
+- Shape info panel (vertices, triangles, bounding diagonal, curvature radius)
+- One-click STL, OBJ, STEP, and 3MF export per shape
 
 ## Dependencies
 
 | Crate | Version | Purpose |
 |-------|---------|---------|
-| [`nalgebra`](https://nalgebra.org) | 0.33 | Linear algebra (`Vector3`, `Matrix3`, `Rotation3`, SVD) |
-| [`rayon`](https://docs.rs/rayon) | 1.10 | Parallel voxelization |
+| [`nalgebra`](https://nalgebra.org) | 0.33 | Linear algebra (`Vector3`, `Point3`, `Rotation3`) |
+| [`rayon`](https://docs.rs/rayon) | 1.10 | Parallel face tessellation |
 | [`approx`](https://docs.rs/approx) | 0.5 | Floating-point assertions (dev only) |
-| [`tiny_http`](https://docs.rs/tiny_http) | 0.12 | HTTP server for the live viewer example (dev only) |
+| [`tiny_http`](https://docs.rs/tiny_http) | 0.12 | HTTP server for the viewer example (dev only) |
 
 ## License
 
