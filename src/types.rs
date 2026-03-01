@@ -133,21 +133,45 @@ impl Default for TessSettings {
 
 impl TessSettings {
     /// Compute tessellation settings automatically from the bounding diagonal
-    /// of a shape. This scales chord tolerance and max edge length relative
-    /// to the geometry's size, so small shapes get enough triangles and large
-    /// shapes don't get too many.
-    ///
-    /// `diag` is the bounding box diagonal length (or any characteristic size).
+    /// of a shape. This is a fallback when curvature info is not available.
     pub fn from_bounding_diagonal(diag: f64) -> Self {
-        let diag = diag.max(1e-10); // avoid division by zero
+        Self::auto_tune(diag, f64::INFINITY)
+    }
+
+    /// Compute tessellation settings from bounding diagonal and minimum
+    /// curvature radius across all faces. This produces smooth results by
+    /// scaling chord tolerance to the smallest curved feature, not the
+    /// overall bounding box (which unfairly penalizes elongated shapes).
+    ///
+    /// - `diag`: bounding box diagonal length
+    /// - `min_curvature_r`: smallest curvature radius (INFINITY if all planar)
+    pub fn auto_tune(diag: f64, min_curvature_r: f64) -> Self {
+        let diag = diag.max(1e-10);
+
+        // Chord tolerance drives visual smoothness for curved surfaces.
+        // For a circle of radius R with n segments, chord deviation =
+        // R(1 - cos(π/n)). At 0.3% of R, a radius-5 cylinder gets:
+        //   tol = 0.015, initial 32 segs dev=0.024 → refines once → 64 segs
+        //   dev=0.006 < 0.015 ✓ → smooth 128 segments around full barrel.
+        let chord_tol = if min_curvature_r.is_finite() {
+            min_curvature_r * 0.003
+        } else {
+            diag * 0.001
+        };
+
+        // Max edge length is a loose safety net to prevent excessively long
+        // triangles on flat regions. Chord deviation is the real quality
+        // driver — keep this loose so it doesn't cause over-refinement.
+        let max_edge = diag * 0.10;
+
+        // Min subdivisions: 32 for curved shapes (good starting grid for
+        // adaptive refinement), 4 for all-planar shapes.
+        let min_sub = if min_curvature_r.is_finite() { 32 } else { 4 };
+
         Self {
-            // 0.5% of diagonal — tight enough for smooth curves,
-            // loose enough that flat faces stay coarse
-            chord_tolerance: diag * 0.005,
-            // 10% of diagonal — prevents overly long triangles
-            max_edge_length: diag * 0.10,
-            // At least 8 subdivisions per parametric direction
-            min_subdivisions: 8,
+            chord_tolerance: chord_tol,
+            max_edge_length: max_edge,
+            min_subdivisions: min_sub,
         }
     }
 }

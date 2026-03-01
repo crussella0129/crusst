@@ -205,10 +205,11 @@ fn main() {
 
                         // Compute auto-tuned settings for this shape
                         let diag = shape.bounding_diagonal();
-                        let auto_settings = TessSettings::from_bounding_diagonal(diag);
+                        let min_r = shape.min_curvature_radius();
+                        let auto_settings = TessSettings::auto_tune(diag, min_r);
 
                         let json = format!(
-                            r#"{{"valid":{},"errors":[{}],"vertices":{},"edges":{},"faces":{},"euler":{},"genus":{},"surfaces":[{}],"mesh_vertices":{},"mesh_triangles":{},"auto_chord":{},"auto_minsub":{},"auto_maxedge":{},"diag":{}}}"#,
+                            r#"{{"valid":{},"errors":[{}],"vertices":{},"edges":{},"faces":{},"euler":{},"genus":{},"surfaces":[{}],"mesh_vertices":{},"mesh_triangles":{},"auto_chord":{},"auto_minsub":{},"auto_maxedge":{},"diag":{},"min_curv_r":{}}}"#,
                             validation.valid,
                             validation.errors.iter().map(|e| format!("\"{}\"", e.replace('"', "\\\""))).collect::<Vec<_>>().join(","),
                             n_verts,
@@ -223,6 +224,7 @@ fn main() {
                             auto_settings.min_subdivisions,
                             auto_settings.max_edge_length,
                             diag,
+                            if min_r.is_finite() { format!("{}", min_r) } else { "null".to_string() },
                         );
                         let header = Header::from_bytes("Content-Type", "application/json").unwrap();
                         let _ = request.respond(Response::from_string(json).with_header(header));
@@ -239,7 +241,7 @@ fn main() {
                 match build_shape(name) {
                     Some(shape) => {
                         let settings = if query.is_empty() {
-                            TessSettings::from_bounding_diagonal(shape.bounding_diagonal())
+                            TessSettings::auto_tune(shape.bounding_diagonal(), shape.min_curvature_radius())
                         } else {
                             parse_settings(query)
                         };

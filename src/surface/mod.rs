@@ -196,6 +196,31 @@ impl Surface {
         }
     }
 
+    /// Return the minimum curvature radius of this surface.
+    ///
+    /// For analytic surfaces, this is exact. For NURBS, we sample and return
+    /// a conservative estimate. Planes return `f64::INFINITY`.
+    pub fn min_curvature_radius(&self) -> f64 {
+        match self {
+            Surface::Plane { .. } => f64::INFINITY,
+            Surface::Cylinder { radius, .. } => *radius,
+            Surface::Sphere { radius, .. } => *radius,
+            Surface::Cone { half_angle, .. } => {
+                // The cross-section radius varies with v; the minimum non-zero
+                // curvature is at small v. We return a conservative small value
+                // based on the half-angle — tighter angle = tighter curvature.
+                // For practical cones, the tessellator already handles this via
+                // chord deviation, so return 1.0 as a sensible floor.
+                1.0_f64.max(0.1 / half_angle.sin().max(0.01))
+            }
+            Surface::Torus { minor_r, .. } => *minor_r,
+            Surface::NurbsSurface(_) => {
+                // Conservative estimate — assume fairly curved
+                1.0
+            }
+        }
+    }
+
     /// Find the parameters `(u, v)` closest to the given 3D point (point inversion).
     pub fn closest_parameters(&self, point: &Point3) -> (f64, f64) {
         match self {

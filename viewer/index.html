@@ -152,6 +152,7 @@
       </div>
       <div id="auto-info-box" class="auto-info">
         <div><span class="ai-label">Bounding diagonal:</span> <span class="ai-val" id="auto-diag">—</span></div>
+        <div><span class="ai-label">Min curvature radius:</span> <span class="ai-val" id="auto-curv">—</span></div>
         <div><span class="ai-label">Chord tolerance:</span> <span class="ai-val" id="auto-chord">—</span></div>
         <div><span class="ai-label">Min subdivisions:</span> <span class="ai-val" id="auto-sub">—</span></div>
         <div><span class="ai-label">Max edge length:</span> <span class="ai-val" id="auto-edge">—</span></div>
@@ -401,6 +402,7 @@ async function loadShape(name) {
   // Update auto-tuning display
   if (info.auto_chord !== undefined) {
     document.getElementById('auto-diag').textContent = info.diag.toFixed(3);
+    document.getElementById('auto-curv').textContent = info.min_curv_r !== null ? info.min_curv_r.toFixed(3) : '∞ (planar)';
     document.getElementById('auto-chord').textContent = info.auto_chord.toFixed(4);
     document.getElementById('auto-sub').textContent = String(info.auto_minsub);
     document.getElementById('auto-edge').textContent = info.auto_maxedge.toFixed(3);

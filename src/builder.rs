@@ -277,9 +277,25 @@ impl Shape {
         tessellate::tessellate_solid(&self.store, self.solid, settings)
     }
 
-    /// Generate a triangle mesh with settings auto-tuned to this shape's size.
+    /// Find the minimum curvature radius across all faces of this solid.
+    /// Returns `f64::INFINITY` if all faces are planar.
+    pub fn min_curvature_radius(&self) -> f64 {
+        let shell = self.store.shell(self.store.solid(self.solid).outer_shell);
+        let mut min_r = f64::INFINITY;
+        for &face_id in &shell.faces {
+            let r = self.store.face(face_id).surface.min_curvature_radius();
+            if r < min_r {
+                min_r = r;
+            }
+        }
+        min_r
+    }
+
+    /// Generate a triangle mesh with settings auto-tuned to this shape's geometry.
     pub fn auto_mesh(&self) -> TriangleMesh {
-        let settings = TessSettings::from_bounding_diagonal(self.bounding_diagonal());
+        let diag = self.bounding_diagonal();
+        let min_r = self.min_curvature_radius();
+        let settings = TessSettings::auto_tune(diag, min_r);
         self.mesh(&settings)
     }
 
