@@ -76,7 +76,7 @@
     position: absolute; top: 16px; right: 16px;
     background: rgba(8, 8, 13, 0.92); border: 1px solid #1e1e30;
     border-radius: 10px; backdrop-filter: blur(10px); padding: 16px 20px;
-    min-width: 200px; font-size: 12px;
+    min-width: 220px; font-size: 12px;
   }
   .controls-panel h4 { color: #888; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
   .controls-panel .ctrl-row { margin-bottom: 10px; }
@@ -89,7 +89,24 @@
     -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
     background: #ff6b35; cursor: pointer;
   }
+  .controls-panel input[type="range"]:disabled { opacity: 0.3; }
+  .controls-panel input[type="range"]:disabled::-webkit-slider-thumb { background: #555; cursor: default; }
   .controls-panel .val { color: #888; font-size: 10px; text-align: right; }
+
+  .mode-toggle {
+    display: flex; margin-bottom: 12px; border: 1px solid #1e1e30; border-radius: 6px; overflow: hidden;
+  }
+  .mode-toggle button {
+    flex: 1; padding: 5px 0; border: none; background: transparent;
+    color: #666; font-size: 11px; cursor: pointer; transition: all 0.15s;
+    font-weight: 600; letter-spacing: 0.3px;
+  }
+  .mode-toggle button.active { background: #1c1c3a; color: #ff6b35; }
+  .mode-toggle button:hover:not(.active) { background: #12121e; color: #aaa; }
+
+  .auto-info { color: #555; font-size: 10px; margin-bottom: 6px; line-height: 1.6; }
+  .auto-info .ai-label { color: #444; }
+  .auto-info .ai-val { color: #ff6b35; font-variant-numeric: tabular-nums; }
 
   .export-bar {
     position: absolute; bottom: 16px; right: 16px;
@@ -129,17 +146,29 @@
 
     <div class="controls-panel" id="controls-panel">
       <h4>Tessellation</h4>
-      <div class="ctrl-row">
-        <label>Chord tolerance <span class="val" id="chord-val">0.02</span></label>
-        <input type="range" id="chord-slider" min="0.001" max="0.2" step="0.001" value="0.02">
+      <div class="mode-toggle">
+        <button id="mode-auto" class="active">Auto</button>
+        <button id="mode-manual">Manual</button>
       </div>
-      <div class="ctrl-row">
-        <label>Min subdivisions <span class="val" id="sub-val">8</span></label>
-        <input type="range" id="sub-slider" min="2" max="32" step="1" value="8">
+      <div id="auto-info-box" class="auto-info">
+        <div><span class="ai-label">Bounding diagonal:</span> <span class="ai-val" id="auto-diag">—</span></div>
+        <div><span class="ai-label">Chord tolerance:</span> <span class="ai-val" id="auto-chord">—</span></div>
+        <div><span class="ai-label">Min subdivisions:</span> <span class="ai-val" id="auto-sub">—</span></div>
+        <div><span class="ai-label">Max edge length:</span> <span class="ai-val" id="auto-edge">—</span></div>
       </div>
-      <div class="ctrl-row">
-        <label>Max edge length <span class="val" id="edge-val">5.0</span></label>
-        <input type="range" id="edge-slider" min="0.5" max="20" step="0.5" value="5.0">
+      <div id="manual-controls" style="display:none;">
+        <div class="ctrl-row">
+          <label>Chord tolerance <span class="val" id="chord-val">0.02</span></label>
+          <input type="range" id="chord-slider" min="0.001" max="1.0" step="0.001" value="0.02">
+        </div>
+        <div class="ctrl-row">
+          <label>Min subdivisions <span class="val" id="sub-val">8</span></label>
+          <input type="range" id="sub-slider" min="2" max="32" step="1" value="8">
+        </div>
+        <div class="ctrl-row">
+          <label>Max edge length <span class="val" id="edge-val">5.0</span></label>
+          <input type="range" id="edge-slider" min="0.1" max="50" step="0.1" value="5.0">
+        </div>
       </div>
       <div class="toggle-row">
         <input type="checkbox" id="wireframe-toggle">
@@ -172,6 +201,7 @@ let currentMeshGroup = null;
 let wireframeOverlay = null;
 let normalHelpers = null;
 let gallery = [];
+let autoMode = true;
 
 const container = document.getElementById('viewport');
 const scene = new THREE.Scene();
@@ -280,14 +310,18 @@ async function loadShape(name) {
   const loadingEl = document.getElementById('loading');
   loadingEl.classList.add('show');
 
-  const chord = document.getElementById('chord-slider').value;
-  const sub = document.getElementById('sub-slider').value;
-  const edge = document.getElementById('edge-slider').value;
-  const qs = 'chord=' + chord + '&minsub=' + sub + '&maxedge=' + edge;
+  let qs = '';
+  if (!autoMode) {
+    const chord = document.getElementById('chord-slider').value;
+    const sub = document.getElementById('sub-slider').value;
+    const edge = document.getElementById('edge-slider').value;
+    qs = 'chord=' + chord + '&minsub=' + sub + '&maxedge=' + edge;
+  }
 
+  const suffix = qs ? '?' + qs : '';
   const [meshRes, infoRes] = await Promise.all([
-    fetch('/api/mesh/' + name + '?' + qs),
-    fetch('/api/info/' + name + '?' + qs),
+    fetch('/api/mesh/' + name + suffix),
+    fetch('/api/info/' + name + suffix),
   ]);
 
   if (!meshRes.ok) { loadingEl.textContent = 'Shape not found'; return; }
@@ -364,6 +398,28 @@ async function loadShape(name) {
     content.appendChild(errDiv);
   }
 
+  // Update auto-tuning display
+  if (info.auto_chord !== undefined) {
+    document.getElementById('auto-diag').textContent = info.diag.toFixed(3);
+    document.getElementById('auto-chord').textContent = info.auto_chord.toFixed(4);
+    document.getElementById('auto-sub').textContent = String(info.auto_minsub);
+    document.getElementById('auto-edge').textContent = info.auto_maxedge.toFixed(3);
+    // Seed manual sliders with auto values so switching to manual starts reasonable
+    if (autoMode) {
+      const chordSlider = document.getElementById('chord-slider');
+      const subSlider = document.getElementById('sub-slider');
+      const edgeSlider = document.getElementById('edge-slider');
+      chordSlider.value = info.auto_chord;
+      chordSlider.max = Math.max(1.0, info.auto_chord * 20).toFixed(3);
+      subSlider.value = info.auto_minsub;
+      edgeSlider.value = info.auto_maxedge;
+      edgeSlider.max = Math.max(50, info.auto_maxedge * 5).toFixed(1);
+      document.getElementById('chord-val').textContent = info.auto_chord.toFixed(4);
+      document.getElementById('sub-val').textContent = String(info.auto_minsub);
+      document.getElementById('edge-val').textContent = info.auto_maxedge.toFixed(3);
+    }
+  }
+
   // Update export buttons
   const bar = document.getElementById('export-bar');
   while (bar.firstChild) bar.removeChild(bar.firstChild);
@@ -377,7 +433,7 @@ async function loadShape(name) {
     a.className = 'export-btn ' + e.cls;
     a.textContent = e.label;
     a.title = e.tip;
-    a.href = '/api/export/' + e.fmt + '/' + name + '?' + qs;
+    a.href = '/api/export/' + e.fmt + '/' + name + suffix;
     a.download = '';
     bar.appendChild(a);
   });
@@ -417,11 +473,28 @@ function setupControls() {
   const chordSlider = document.getElementById('chord-slider');
   const subSlider = document.getElementById('sub-slider');
   const edgeSlider = document.getElementById('edge-slider');
+  const autoBtn = document.getElementById('mode-auto');
+  const manualBtn = document.getElementById('mode-manual');
+  const autoInfoBox = document.getElementById('auto-info-box');
+  const manualControls = document.getElementById('manual-controls');
+
+  function setMode(isAuto) {
+    autoMode = isAuto;
+    autoBtn.classList.toggle('active', isAuto);
+    manualBtn.classList.toggle('active', !isAuto);
+    autoInfoBox.style.display = isAuto ? 'block' : 'none';
+    manualControls.style.display = isAuto ? 'none' : 'block';
+    if (currentShape) loadShape(currentShape);
+  }
+
+  autoBtn.addEventListener('click', function() { setMode(true); });
+  manualBtn.addEventListener('click', function() { setMode(false); });
+
   let debounceTimer;
   function onSettingsChange() {
-    document.getElementById('chord-val').textContent = parseFloat(chordSlider.value).toFixed(3);
+    document.getElementById('chord-val').textContent = parseFloat(chordSlider.value).toFixed(4);
     document.getElementById('sub-val').textContent = subSlider.value;
-    document.getElementById('edge-val').textContent = parseFloat(edgeSlider.value).toFixed(1);
+    document.getElementById('edge-val').textContent = parseFloat(edgeSlider.value).toFixed(3);
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(function() {
       if (currentShape) loadShape(currentShape);

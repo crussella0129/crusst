@@ -203,8 +203,12 @@ fn main() {
                             None => "null".to_string(),
                         };
 
+                        // Compute auto-tuned settings for this shape
+                        let diag = shape.bounding_diagonal();
+                        let auto_settings = TessSettings::from_bounding_diagonal(diag);
+
                         let json = format!(
-                            r#"{{"valid":{},"errors":[{}],"vertices":{},"edges":{},"faces":{},"euler":{},"genus":{},"surfaces":[{}],"mesh_vertices":{},"mesh_triangles":{}}}"#,
+                            r#"{{"valid":{},"errors":[{}],"vertices":{},"edges":{},"faces":{},"euler":{},"genus":{},"surfaces":[{}],"mesh_vertices":{},"mesh_triangles":{},"auto_chord":{},"auto_minsub":{},"auto_maxedge":{},"diag":{}}}"#,
                             validation.valid,
                             validation.errors.iter().map(|e| format!("\"{}\"", e.replace('"', "\\\""))).collect::<Vec<_>>().join(","),
                             n_verts,
@@ -215,6 +219,10 @@ fn main() {
                             surf_types.iter().map(|s| format!("\"{}\"", s)).collect::<Vec<_>>().join(","),
                             mesh.vertices.len(),
                             mesh.indices.len() / 3,
+                            auto_settings.chord_tolerance,
+                            auto_settings.min_subdivisions,
+                            auto_settings.max_edge_length,
+                            diag,
                         );
                         let header = Header::from_bytes("Content-Type", "application/json").unwrap();
                         let _ = request.respond(Response::from_string(json).with_header(header));
@@ -228,9 +236,13 @@ fn main() {
             p if p.starts_with("/api/export/") => {
                 let rest = &p["/api/export/".len()..];
                 let (format, name) = rest.split_once('/').unwrap_or(("", rest));
-                let settings = parse_settings(query);
                 match build_shape(name) {
                     Some(shape) => {
+                        let settings = if query.is_empty() {
+                            TessSettings::from_bounding_diagonal(shape.bounding_diagonal())
+                        } else {
+                            parse_settings(query)
+                        };
                         let mut buf = Vec::new();
                         let (ct, filename) = match format {
                             "stl" => {
