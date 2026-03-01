@@ -110,7 +110,7 @@ impl BBox3 {
 }
 
 /// Settings controlling adaptive tessellation of B-Rep faces.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct TessSettings {
     /// Maximum chord deviation — the maximum allowed distance between
     /// the tessellated surface and the true mathematical surface.
@@ -127,6 +127,27 @@ impl Default for TessSettings {
             chord_tolerance: 0.01,
             max_edge_length: 5.0,
             min_subdivisions: 4,
+        }
+    }
+}
+
+impl TessSettings {
+    /// Compute tessellation settings automatically from the bounding diagonal
+    /// of a shape. This scales chord tolerance and max edge length relative
+    /// to the geometry's size, so small shapes get enough triangles and large
+    /// shapes don't get too many.
+    ///
+    /// `diag` is the bounding box diagonal length (or any characteristic size).
+    pub fn from_bounding_diagonal(diag: f64) -> Self {
+        let diag = diag.max(1e-10); // avoid division by zero
+        Self {
+            // 0.5% of diagonal — tight enough for smooth curves,
+            // loose enough that flat faces stay coarse
+            chord_tolerance: diag * 0.005,
+            // 10% of diagonal — prevents overly long triangles
+            max_edge_length: diag * 0.10,
+            // At least 8 subdivisions per parametric direction
+            min_subdivisions: 8,
         }
     }
 }

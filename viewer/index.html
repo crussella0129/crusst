@@ -343,7 +343,8 @@ async function loadShape(name) {
   content.appendChild(makeInfoRow('B-Rep Vertices', String(info.vertices)));
   content.appendChild(makeInfoRow('B-Rep Edges', String(info.edges)));
   content.appendChild(makeInfoRow('B-Rep Faces', String(info.faces)));
-  content.appendChild(makeInfoRow('Euler (V-E+F)', String(info.euler)));
+  const genusStr = info.genus !== null && info.genus !== undefined ? ' (genus ' + info.genus + ')' : '';
+  content.appendChild(makeInfoRow('Euler (V-E+F)', String(info.euler) + genusStr));
   content.appendChild(makeDivider());
   content.appendChild(makeInfoRow('Mesh Vertices', meshData.vertexCount.toLocaleString()));
   content.appendChild(makeInfoRow('Mesh Triangles', meshData.triangleCount.toLocaleString()));

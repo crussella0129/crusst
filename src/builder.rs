@@ -249,9 +249,38 @@ impl Shape {
 
     // --- Output ---
 
-    /// Generate a triangle mesh from this shape.
+    /// Compute the bounding box diagonal of this shape from its topology vertices.
+    pub fn bounding_diagonal(&self) -> f64 {
+        let vert_ids = self.store.solid_vertices(self.solid);
+        if vert_ids.is_empty() {
+            return 1.0;
+        }
+        let mut min = [f64::MAX; 3];
+        let mut max = [f64::MIN; 3];
+        for &vid in &vert_ids {
+            let p = self.store.vertex(vid).point;
+            min[0] = min[0].min(p.x);
+            min[1] = min[1].min(p.y);
+            min[2] = min[2].min(p.z);
+            max[0] = max[0].max(p.x);
+            max[1] = max[1].max(p.y);
+            max[2] = max[2].max(p.z);
+        }
+        let dx = max[0] - min[0];
+        let dy = max[1] - min[1];
+        let dz = max[2] - min[2];
+        (dx * dx + dy * dy + dz * dz).sqrt().max(1e-10)
+    }
+
+    /// Generate a triangle mesh from this shape with explicit settings.
     pub fn mesh(&self, settings: &TessSettings) -> TriangleMesh {
         tessellate::tessellate_solid(&self.store, self.solid, settings)
+    }
+
+    /// Generate a triangle mesh with settings auto-tuned to this shape's size.
+    pub fn auto_mesh(&self) -> TriangleMesh {
+        let settings = TessSettings::from_bounding_diagonal(self.bounding_diagonal());
+        self.mesh(&settings)
     }
 
     /// Validate the topology of this shape.

@@ -147,10 +147,13 @@ fn main() {
 
             p if p.starts_with("/api/mesh/") => {
                 let name = &p["/api/mesh/".len()..];
-                let settings = parse_settings(query);
                 match build_shape(name) {
                     Some(shape) => {
-                        let mesh = shape.mesh(&settings);
+                        let mesh = if query.is_empty() {
+                            shape.auto_mesh()
+                        } else {
+                            shape.mesh(&parse_settings(query))
+                        };
                         let binary = mesh.to_binary();
                         let header = Header::from_bytes("Content-Type", "application/octet-stream").unwrap();
                         let _ = request.respond(Response::from_data(binary).with_header(header));
@@ -166,8 +169,11 @@ fn main() {
                 match build_shape(name) {
                     Some(shape) => {
                         let validation = shape.validate();
-                        let settings = parse_settings(query);
-                        let mesh = shape.mesh(&settings);
+                        let mesh = if query.is_empty() {
+                            shape.auto_mesh()
+                        } else {
+                            shape.mesh(&parse_settings(query))
+                        };
 
                         // Topology counts
                         let n_verts = shape.store.solid_vertices(shape.solid).len();
@@ -192,16 +198,20 @@ fn main() {
                             }
                         }
 
-                        let euler = n_verts as i64 - n_edges as i64 + n_faces as i64;
+                        let genus_str = match validation.genus {
+                            Some(g) => format!("{}", g),
+                            None => "null".to_string(),
+                        };
 
                         let json = format!(
-                            r#"{{"valid":{},"errors":[{}],"vertices":{},"edges":{},"faces":{},"euler":{},"surfaces":[{}],"mesh_vertices":{},"mesh_triangles":{}}}"#,
+                            r#"{{"valid":{},"errors":[{}],"vertices":{},"edges":{},"faces":{},"euler":{},"genus":{},"surfaces":[{}],"mesh_vertices":{},"mesh_triangles":{}}}"#,
                             validation.valid,
                             validation.errors.iter().map(|e| format!("\"{}\"", e.replace('"', "\\\""))).collect::<Vec<_>>().join(","),
                             n_verts,
                             n_edges,
                             n_faces,
-                            euler,
+                            validation.euler,
+                            genus_str,
                             surf_types.iter().map(|s| format!("\"{}\"", s)).collect::<Vec<_>>().join(","),
                             mesh.vertices.len(),
                             mesh.indices.len() / 3,

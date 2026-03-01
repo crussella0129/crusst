@@ -3,7 +3,7 @@
 //! Checks invariants that must hold for a valid manifold solid:
 //! - Every edge has exactly 2 coedges (manifold condition)
 //! - Every wire is closed (circular linked list)
-//! - Euler formula: V - E + F = 2 (for genus-0 solids)
+//! - Euler formula: V - E + F = 2 - 2g (genus g derived from topology)
 
 use super::store::TopoStore;
 use super::types::*;
@@ -14,6 +14,11 @@ use std::collections::HashMap;
 pub struct ValidationResult {
     pub valid: bool,
     pub errors: Vec<String>,
+    /// Euler characteristic V - E + F.
+    pub euler: i64,
+    /// Genus of the surface (0 = sphere-like, 1 = torus-like, etc.).
+    /// `None` if the Euler characteristic doesn't correspond to a valid genus.
+    pub genus: Option<u64>,
 }
 
 /// Validate that a solid satisfies B-Rep invariants.
@@ -98,21 +103,35 @@ pub fn validate_solid(store: &TopoStore, solid_id: SolidId) -> ValidationResult 
         }
     }
 
-    // 4. Euler formula: V - E + F = 2 (genus 0, no holes)
+    // 4. Euler formula: V - E + F = 2 - 2g
+    //    genus 0 (sphere-like): χ = 2
+    //    genus 1 (torus-like):  χ = 0
+    //    genus g:               χ = 2 - 2g
     let v = store.solid_vertices(solid_id).len() as i64;
     let e = store.solid_edges(solid_id).len() as i64;
     let f = store.solid_face_count(solid_id) as i64;
     let euler = v - e + f;
 
-    if euler != 2 {
+    // Derive genus: g = (2 - χ) / 2. Valid when g is a non-negative integer.
+    let genus_2x = 2 - euler; // = 2g, must be even and non-negative
+    if genus_2x < 0 || genus_2x % 2 != 0 {
         errors.push(format!(
-            "Euler formula V-E+F = {v}-{e}+{f} = {euler} (expected 2 for genus-0)"
+            "Euler formula V-E+F = {v}-{e}+{f} = {euler} \
+             (not a valid closed orientable manifold: 2-χ = {genus_2x} is not 2g for any non-negative integer g)"
         ));
     }
+
+    let genus = if genus_2x >= 0 && genus_2x % 2 == 0 {
+        Some((genus_2x / 2) as u64)
+    } else {
+        None
+    };
 
     ValidationResult {
         valid: errors.is_empty(),
         errors,
+        euler,
+        genus,
     }
 }
 
