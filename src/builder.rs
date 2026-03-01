@@ -1,860 +1,690 @@
-//! Declarative Shape builder API.
+//! Fluent builder API for constructing B-Rep shapes.
 //!
-//! `Shape` is the user-facing entry point for composing SDF geometry.
-//! It wraps an `Arc<SdfNode>` so it is cheaply cloneable and immutable.
+//! `Shape` wraps a `(TopoStore, SolidId)` pair and provides chainable methods
+//! for creating primitives, applying transforms, and generating meshes.
 //!
-//! # Example
-//!
-//! ```rust,no_run
+//! # Examples
+//! ```
 //! use crusst::builder::Shape;
+//! use crusst::types::TessSettings;
 //!
-//! let bracket = Shape::box3(20.0, 3.0, 15.0)
-//!     .union(Shape::cylinder(5.0, 20.0).translate(0.0, 10.0, 0.0))
-//!     .subtract(Shape::cylinder(3.0, 25.0))
-//!     .translate(0.0, 5.0, 0.0);
-//! bracket.export_obj("bracket.obj").unwrap();
+//! let mesh = Shape::box3(5.0, 3.0, 8.0)
+//!     .translate(10.0, 0.0, 0.0)
+//!     .mesh(&TessSettings::default());
 //! ```
 
-use crate::blend::BlendProfile;
-use crate::dag::SdfNode;
-use crate::dual_contouring::extract_mesh_adaptive;
-use crate::feature::{EdgeInfo, FaceInfo, FeatureTarget};
-use crate::types::{BBox3, MeshSettings, TriangleMesh};
-use crate::voxel::VoxelGrid;
-use nalgebra::{Rotation3, Vector3};
-use rayon::prelude::*;
-use std::sync::Arc;
+use crate::math::{Point3, Vector3};
+use crate::primitive;
+use crate::profile::Profile;
+use crate::tessellate;
+use crate::topo::*;
+use crate::types::{TessSettings, TriangleMesh};
 
-/// A composable, immutable shape backed by an SDF expression DAG.
-///
-/// `Shape` is cheaply cloneable (`Arc` under the hood) and can be combined
-/// with CSG operations and transforms to build complex geometry.
-#[derive(Clone)]
+/// A B-Rep shape with fluent API.
 pub struct Shape {
-    node: Arc<SdfNode>,
+    pub store: TopoStore,
+    pub solid: SolidId,
 }
 
-// ---------------------------------------------------------------------------
-// Primitives — all centered at origin unless otherwise noted
-// ---------------------------------------------------------------------------
-
 impl Shape {
-    /// Sphere centered at the origin.
-    pub fn sphere(radius: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Sphere {
-                center: Vector3::zeros(),
-                radius,
-            }),
-        }
-    }
+    // --- Primitive constructors ---
 
-    /// Axis-aligned box centered at the origin.
-    /// `hx`, `hy`, `hz` are the half-extents along each axis.
+    /// Axis-aligned box centered at origin with half-extents (hx, hy, hz).
     pub fn box3(hx: f64, hy: f64, hz: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Box3 {
-                center: Vector3::zeros(),
-                half_extents: Vector3::new(hx, hy, hz),
-            }),
-        }
+        let mut store = TopoStore::new();
+        let solid = primitive::make_box(&mut store, hx, hy, hz);
+        Shape { store, solid }
     }
 
-    /// Capped cylinder aligned along the Y axis, base at the origin.
+    /// Sphere centered at origin.
+    pub fn sphere(radius: f64) -> Self {
+        let mut store = TopoStore::new();
+        let solid = primitive::make_sphere(&mut store, radius);
+        Shape { store, solid }
+    }
+
+    /// Cylinder on the Z axis from z=0 to z=height.
     pub fn cylinder(radius: f64, height: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Cylinder {
-                base: Vector3::zeros(),
-                axis: Vector3::new(0.0, 1.0, 0.0),
-                radius,
-                height,
-            }),
-        }
+        let mut store = TopoStore::new();
+        let solid = primitive::make_cylinder(&mut store, radius, height);
+        Shape { store, solid }
     }
 
-    /// Torus lying in the XZ plane, centered at the origin.
-    pub fn torus(major: f64, minor: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Torus {
-                center: Vector3::zeros(),
-                major_radius: major,
-                minor_radius: minor,
-            }),
-        }
+    /// Cone (frustum) on the Z axis. `r1` bottom radius, `r2` top radius.
+    pub fn cone(r1: f64, r2: f64, height: f64) -> Self {
+        let mut store = TopoStore::new();
+        let solid = primitive::make_cone(&mut store, r1, r2, height);
+        Shape { store, solid }
     }
 
-    /// Capsule (sphere-swept segment) from `a` to `b` with given `radius`.
-    pub fn capsule(a: Vector3<f64>, b: Vector3<f64>, radius: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Capsule { a, b, radius }),
-        }
+    /// Torus centered at origin on the Z axis.
+    pub fn torus(major_r: f64, minor_r: f64) -> Self {
+        let mut store = TopoStore::new();
+        let solid = primitive::make_torus(&mut store, major_r, minor_r);
+        Shape { store, solid }
     }
 
-    /// Capped cone (truncated cone) from `a` (radius `ra`) to `b` (radius `rb`).
-    pub fn capped_cone(a: Vector3<f64>, b: Vector3<f64>, ra: f64, rb: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::CappedCone { a, b, ra, rb }),
-        }
+    /// Wedge (triangular prism) on the Z axis.
+    pub fn wedge(dx: f64, dy: f64, dz: f64) -> Self {
+        let mut store = TopoStore::new();
+        let solid = primitive::make_wedge(&mut store, dx, dy, dz);
+        Shape { store, solid }
     }
 
-    /// Box with rounded edges. Total size is `half_extents + radius`.
-    pub fn rounded_box(hx: f64, hy: f64, hz: f64, radius: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::RoundedBox {
-                center: Vector3::zeros(),
-                half_extents: Vector3::new(hx, hy, hz),
-                radius,
-            }),
-        }
+    /// Capsule (hemisphere-capped cylinder) on the Z axis.
+    pub fn capsule(radius: f64, height: f64) -> Self {
+        let mut store = TopoStore::new();
+        let solid = primitive::make_capsule(&mut store, radius, height);
+        Shape { store, solid }
     }
 
-    /// Ellipsoid with semi-axis lengths `rx`, `ry`, `rz`.
-    pub fn ellipsoid(rx: f64, ry: f64, rz: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Ellipsoid {
-                center: Vector3::zeros(),
-                radii: Vector3::new(rx, ry, rz),
-            }),
+    // --- Transform operations ---
+
+    /// Translate the shape by (dx, dy, dz).
+    pub fn translate(mut self, dx: f64, dy: f64, dz: f64) -> Self {
+        let offset = Vector3::new(dx, dy, dz);
+        for v in &mut self.store.vertices {
+            v.point += offset;
         }
-    }
-
-    /// Rounded cylinder aligned along the Y axis, centered at origin.
-    pub fn rounded_cylinder(radius: f64, round_radius: f64, half_height: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::RoundedCylinder {
-                center: Vector3::zeros(),
-                radius,
-                round_radius,
-                half_height,
-            }),
+        // Update surface origins
+        for face in &mut self.store.faces {
+            translate_surface(&mut face.surface, &offset);
         }
-    }
-
-    /// Half-space: the solid region where `normal . p + d <= 0`.
-    pub fn half_space(normal: Vector3<f64>, d: f64) -> Self {
-        let n = normal.normalize();
-        Self {
-            node: Arc::new(SdfNode::HalfSpace { normal: n, d }),
+        // Update edge curve origins
+        for edge in &mut self.store.edges {
+            translate_curve(&mut edge.curve, &offset);
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// CSG operations — consume self, return new Shape
-// ---------------------------------------------------------------------------
-
-impl Shape {
-    /// Boolean union: the volume of either shape.
-    pub fn union(self, other: Shape) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Union(self.node, other.node)),
-        }
-    }
-
-    /// Boolean subtraction: self minus other.
-    pub fn subtract(self, other: Shape) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Difference(self.node, other.node)),
-        }
-    }
-
-    /// Boolean intersection: the volume shared by both shapes.
-    pub fn intersect(self, other: Shape) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Intersection(self.node, other.node)),
-        }
-    }
-
-    /// Smooth union (fillet blend) with blending radius `k`.
-    pub fn smooth_union(self, other: Shape, k: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::SmoothUnion(self.node, other.node, k)),
-        }
-    }
-
-    /// Smooth intersection with blending radius `k`.
-    pub fn smooth_intersect(self, other: Shape, k: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::SmoothIntersection(self.node, other.node, k)),
-        }
-    }
-
-    /// Smooth subtraction with blending radius `k`.
-    pub fn smooth_subtract(self, other: Shape, k: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::SmoothDifference(self.node, other.node, k)),
-        }
-    }
-
-    /// Round union (circular fillet) with radius `r`.
-    pub fn round_union(self, other: Shape, r: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::RoundUnion(self.node, other.node, r)),
-        }
-    }
-
-    /// Round intersection (circular fillet) with radius `r`.
-    pub fn round_intersect(self, other: Shape, r: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::RoundIntersection(self.node, other.node, r)),
-        }
-    }
-
-    /// Round subtraction (circular fillet) with radius `r`.
-    pub fn round_subtract(self, other: Shape, r: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::RoundDifference(self.node, other.node, r)),
-        }
-    }
-
-    /// Chamfer union with size `k`.
-    pub fn chamfer_union(self, other: Shape, k: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::ChamferUnion(self.node, other.node, k)),
-        }
-    }
-
-    /// Chamfer intersection with size `k`.
-    pub fn chamfer_intersect(self, other: Shape, k: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::ChamferIntersection(self.node, other.node, k)),
-        }
-    }
-
-    /// Chamfer subtraction with size `k`.
-    pub fn chamfer_subtract(self, other: Shape, k: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::ChamferDifference(self.node, other.node, k)),
-        }
-    }
-
-    /// Apply a fillet with the given profile to targeted edges.
-    pub fn fillet(self, profile: BlendProfile, targets: Vec<FeatureTarget>) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Fillet {
-                inner: self.node,
-                profile,
-                targets,
-            }),
-        }
-    }
-
-    /// Apply a chamfer with the given profile to targeted edges.
-    pub fn chamfer(self, profile: BlendProfile, targets: Vec<FeatureTarget>) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Chamfer {
-                inner: self.node,
-                profile,
-                targets,
-            }),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Transforms
-// ---------------------------------------------------------------------------
-
-impl Shape {
-    /// Translate by `(x, y, z)`.
-    pub fn translate(self, x: f64, y: f64, z: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Translate(self.node, Vector3::new(x, y, z))),
-        }
+        self
     }
 
     /// Rotate around the X axis by `angle` radians.
-    pub fn rotate_x(self, angle: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Rotate(
-                self.node,
-                Rotation3::from_axis_angle(&Vector3::x_axis(), angle),
-            )),
-        }
+    pub fn rotate_x(mut self, angle: f64) -> Self {
+        let rot = nalgebra::Rotation3::from_axis_angle(&nalgebra::Vector3::x_axis(), angle);
+        apply_rotation(&mut self.store, &rot);
+        self
     }
 
     /// Rotate around the Y axis by `angle` radians.
-    pub fn rotate_y(self, angle: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Rotate(
-                self.node,
-                Rotation3::from_axis_angle(&Vector3::y_axis(), angle),
-            )),
-        }
+    pub fn rotate_y(mut self, angle: f64) -> Self {
+        let rot = nalgebra::Rotation3::from_axis_angle(&nalgebra::Vector3::y_axis(), angle);
+        apply_rotation(&mut self.store, &rot);
+        self
     }
 
     /// Rotate around the Z axis by `angle` radians.
-    pub fn rotate_z(self, angle: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Rotate(
-                self.node,
-                Rotation3::from_axis_angle(&Vector3::z_axis(), angle),
-            )),
-        }
+    pub fn rotate_z(mut self, angle: f64) -> Self {
+        let rot = nalgebra::Rotation3::from_axis_angle(&nalgebra::Vector3::z_axis(), angle);
+        apply_rotation(&mut self.store, &rot);
+        self
     }
 
-    /// Uniform scale by `factor`.
-    pub fn scale(self, factor: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Scale(self.node, factor)),
+    /// Uniform scale.
+    pub fn scale(mut self, factor: f64) -> Self {
+        for v in &mut self.store.vertices {
+            v.point.coords *= factor;
         }
+        for face in &mut self.store.faces {
+            scale_surface(&mut face.surface, factor);
+        }
+        for edge in &mut self.store.edges {
+            scale_curve(&mut edge.curve, factor);
+        }
+        self
     }
 
-    /// Mirror across the YZ plane (reflect X).
+    /// Mirror across the YZ plane (negate X).
     pub fn mirror_x(self) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Mirror(self.node, Vector3::new(1.0, 0.0, 0.0))),
-        }
+        self.mirror(Vector3::new(-1.0, 1.0, 1.0))
     }
 
-    /// Mirror across the XZ plane (reflect Y).
+    /// Mirror across the XZ plane (negate Y).
     pub fn mirror_y(self) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Mirror(self.node, Vector3::new(0.0, 1.0, 0.0))),
-        }
+        self.mirror(Vector3::new(1.0, -1.0, 1.0))
     }
 
-    /// Mirror across the XY plane (reflect Z).
+    /// Mirror across the XY plane (negate Z).
     pub fn mirror_z(self) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Mirror(self.node, Vector3::new(0.0, 0.0, 1.0))),
-        }
+        self.mirror(Vector3::new(1.0, 1.0, -1.0))
     }
 
-    /// Shell (hollow) with wall `thickness`.
-    pub fn shell(self, thickness: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Shell(self.node, thickness)),
+    fn mirror(mut self, scale: Vector3) -> Self {
+        for v in &mut self.store.vertices {
+            v.point.x *= scale.x;
+            v.point.y *= scale.y;
+            v.point.z *= scale.z;
         }
+        // Flip face orientations since mirroring reverses winding
+        for face in &mut self.store.faces {
+            face.outward = !face.outward;
+            mirror_surface(&mut face.surface, &scale);
+        }
+        for edge in &mut self.store.edges {
+            mirror_curve(&mut edge.curve, &scale);
+        }
+        self
     }
 
-    /// Round all edges with radius `r` (Minkowski offset).
-    pub fn round(self, r: f64) -> Self {
-        Self {
-            node: Arc::new(SdfNode::Round(self.node, r)),
+    // --- Profile-based operations ---
+
+    /// Extrude a 2D profile along the Z axis by `depth`.
+    ///
+    /// Creates a solid by extruding the profile from z=0 to z=depth,
+    /// capping both ends with planar faces.
+    pub fn extrude(profile: &Profile, depth: f64) -> Self {
+        // Build a prismatic solid from the profile
+        // For now, approximate the profile as a polygon and build topology
+        let n_samples = profile.segments.len().max(4) * 4;
+        let mut bottom_pts: Vec<Point3> = Vec::with_capacity(n_samples);
+        let mut top_pts: Vec<Point3> = Vec::with_capacity(n_samples);
+
+        for i in 0..n_samples {
+            let t = i as f64 / n_samples as f64;
+            let p2 = profile.evaluate(t);
+            bottom_pts.push(Point3::new(p2.x, p2.y, 0.0));
+            top_pts.push(Point3::new(p2.x, p2.y, depth));
         }
-    }
-}
 
-// ---------------------------------------------------------------------------
-// Query
-// ---------------------------------------------------------------------------
-
-impl Shape {
-    /// Evaluate the signed distance at `point`.
-    /// Negative inside, zero on surface, positive outside.
-    pub fn distance(&self, point: Vector3<f64>) -> f64 {
-        self.node.evaluate(point)
-    }
-
-    /// Returns `true` if `point` is inside the shape (SDF < 0).
-    pub fn contains(&self, point: Vector3<f64>) -> bool {
-        self.node.evaluate(point) < 0.0
-    }
-
-    /// Get face information for the innermost primitive in this shape.
-    /// Returns None for non-primitive or CSG shapes.
-    pub fn faces(&self) -> Option<Vec<FaceInfo>> {
-        self.node.face_info()
+        build_extrusion(bottom_pts, top_pts, depth)
     }
 
-    /// Get edge information for the innermost primitive in this shape.
-    /// Returns None for non-primitive or CSG shapes.
-    pub fn edges(&self) -> Option<Vec<EdgeInfo>> {
-        self.node.edge_info()
-    }
-}
+    /// Revolve a 2D profile around the Z axis by `angle` radians.
+    pub fn revolve(profile: &Profile, angle: f64) -> Self {
+        let n_profile = profile.segments.len().max(4) * 4;
+        let n_sweep = ((angle / std::f64::consts::FRAC_PI_4).ceil() as usize).max(4) * 2;
 
-// ---------------------------------------------------------------------------
-// Bounding box computation — walk the DAG
-// ---------------------------------------------------------------------------
+        let mut store = TopoStore::new();
+        let mut all_verts: Vec<Vec<VertexId>> = Vec::new();
 
-impl Shape {
-    /// Compute a conservative axis-aligned bounding box by walking the DAG.
-    pub fn bounding_box(&self) -> BBox3 {
-        compute_bbox(&self.node)
-    }
-}
+        // Create vertex grid: profile × sweep
+        for j in 0..=n_sweep {
+            let theta = angle * j as f64 / n_sweep as f64;
+            let cos_t = theta.cos();
+            let sin_t = theta.sin();
+            let mut ring = Vec::with_capacity(n_profile);
 
-/// Recursively compute a conservative AABB for an SdfNode.
-pub(crate) fn compute_bbox(node: &SdfNode) -> BBox3 {
-    match node {
-        // -- Primitives --------------------------------------------------------
-        SdfNode::Sphere { center, radius } => {
-            let r = Vector3::new(*radius, *radius, *radius);
-            BBox3::new(center - r, center + r)
-        }
-
-        SdfNode::Box3 {
-            center,
-            half_extents,
-        } => BBox3::new(center - half_extents, center + half_extents),
-
-        SdfNode::Cylinder {
-            base,
-            axis,
-            radius,
-            height,
-        } => {
-            // The cylinder goes from base to base + axis * height.
-            // Compute a conservative AABB from the two end-cap discs.
-            let top = base + axis * *height;
-
-            // For each axis, the disc extends by radius * sin(angle between
-            // cylinder axis and that coordinate axis). Conservative: use
-            // radius for each perpendicular extent.
-            let perp_extent = Vector3::new(
-                radius * (1.0 - axis.x * axis.x).max(0.0).sqrt(),
-                radius * (1.0 - axis.y * axis.y).max(0.0).sqrt(),
-                radius * (1.0 - axis.z * axis.z).max(0.0).sqrt(),
-            );
-
-            let min1 = base - perp_extent;
-            let max1 = base + perp_extent;
-            let min2 = top - perp_extent;
-            let max2 = top + perp_extent;
-
-            BBox3::new(
-                Vector3::new(min1.x.min(min2.x), min1.y.min(min2.y), min1.z.min(min2.z)),
-                Vector3::new(max1.x.max(max2.x), max1.y.max(max2.y), max1.z.max(max2.z)),
-            )
-        }
-
-        SdfNode::CappedCone { a, b, ra, rb } => {
-            // Conservative: AABB that encloses both end-cap spheres.
-            let r_max = ra.max(*rb);
-            let ext = Vector3::new(r_max, r_max, r_max);
-            let min_a = a - ext;
-            let max_a = a + ext;
-            let min_b = b - ext;
-            let max_b = b + ext;
-            BBox3::new(
-                Vector3::new(
-                    min_a.x.min(min_b.x),
-                    min_a.y.min(min_b.y),
-                    min_a.z.min(min_b.z),
-                ),
-                Vector3::new(
-                    max_a.x.max(max_b.x),
-                    max_a.y.max(max_b.y),
-                    max_a.z.max(max_b.z),
-                ),
-            )
-        }
-
-        SdfNode::Torus {
-            center,
-            major_radius,
-            minor_radius,
-        } => {
-            // Torus lies in XZ plane. Extent in X and Z is major + minor,
-            // extent in Y is just minor.
-            let r_xz = major_radius + minor_radius;
-            BBox3::new(
-                Vector3::new(center.x - r_xz, center.y - minor_radius, center.z - r_xz),
-                Vector3::new(center.x + r_xz, center.y + minor_radius, center.z + r_xz),
-            )
-        }
-
-        SdfNode::RoundedBox {
-            center,
-            half_extents,
-            radius,
-        } => {
-            let total = half_extents + Vector3::new(*radius, *radius, *radius);
-            BBox3::new(center - total, center + total)
-        }
-
-        SdfNode::Capsule { a, b, radius } => {
-            let ext = Vector3::new(*radius, *radius, *radius);
-            let min_a = a - ext;
-            let max_a = a + ext;
-            let min_b = b - ext;
-            let max_b = b + ext;
-            BBox3::new(
-                Vector3::new(
-                    min_a.x.min(min_b.x),
-                    min_a.y.min(min_b.y),
-                    min_a.z.min(min_b.z),
-                ),
-                Vector3::new(
-                    max_a.x.max(max_b.x),
-                    max_a.y.max(max_b.y),
-                    max_a.z.max(max_b.z),
-                ),
-            )
-        }
-
-        SdfNode::Ellipsoid { center, radii } => BBox3::new(center - radii, center + radii),
-
-        SdfNode::RoundedCylinder {
-            center,
-            radius,
-            round_radius,
-            half_height,
-        } => {
-            let r_xz = radius + round_radius;
-            let h = half_height + round_radius;
-            BBox3::new(
-                Vector3::new(center.x - r_xz, center.y - h, center.z - r_xz),
-                Vector3::new(center.x + r_xz, center.y + h, center.z + r_xz),
-            )
-        }
-
-        SdfNode::HalfSpace { .. } => {
-            // Half-space is unbounded; use a large fallback.
-            let big = 1000.0;
-            BBox3::new(Vector3::new(-big, -big, -big), Vector3::new(big, big, big))
-        }
-
-        // -- CSG ---------------------------------------------------------------
-        SdfNode::Union(a, b) => {
-            let ba = compute_bbox(a);
-            let bb = compute_bbox(b);
-            BBox3::new(
-                Vector3::new(
-                    ba.min.x.min(bb.min.x),
-                    ba.min.y.min(bb.min.y),
-                    ba.min.z.min(bb.min.z),
-                ),
-                Vector3::new(
-                    ba.max.x.max(bb.max.x),
-                    ba.max.y.max(bb.max.y),
-                    ba.max.z.max(bb.max.z),
-                ),
-            )
-        }
-
-        SdfNode::Intersection(a, b) => {
-            // Intersection is bounded by the overlap of both boxes.
-            let ba = compute_bbox(a);
-            let bb = compute_bbox(b);
-            BBox3::new(
-                Vector3::new(
-                    ba.min.x.max(bb.min.x),
-                    ba.min.y.max(bb.min.y),
-                    ba.min.z.max(bb.min.z),
-                ),
-                Vector3::new(
-                    ba.max.x.min(bb.max.x),
-                    ba.max.y.min(bb.max.y),
-                    ba.max.z.min(bb.max.z),
-                ),
-            )
-        }
-
-        SdfNode::Difference(a, _b) => {
-            // Difference is bounded by the first operand.
-            compute_bbox(a)
-        }
-
-        SdfNode::SmoothUnion(a, b, k) => {
-            let ba = compute_bbox(a);
-            let bb = compute_bbox(b);
-            // Expand by k to account for the blending region.
-            let ext = Vector3::new(*k, *k, *k);
-            BBox3::new(
-                Vector3::new(
-                    ba.min.x.min(bb.min.x),
-                    ba.min.y.min(bb.min.y),
-                    ba.min.z.min(bb.min.z),
-                ) - ext,
-                Vector3::new(
-                    ba.max.x.max(bb.max.x),
-                    ba.max.y.max(bb.max.y),
-                    ba.max.z.max(bb.max.z),
-                ) + ext,
-            )
-        }
-
-        SdfNode::SmoothIntersection(a, b, k) => {
-            let ba = compute_bbox(a);
-            let bb = compute_bbox(b);
-            let ext = Vector3::new(*k, *k, *k);
-            BBox3::new(
-                Vector3::new(
-                    ba.min.x.max(bb.min.x),
-                    ba.min.y.max(bb.min.y),
-                    ba.min.z.max(bb.min.z),
-                ) - ext,
-                Vector3::new(
-                    ba.max.x.min(bb.max.x),
-                    ba.max.y.min(bb.max.y),
-                    ba.max.z.min(bb.max.z),
-                ) + ext,
-            )
-        }
-
-        SdfNode::SmoothDifference(a, _b, k) => {
-            let ba = compute_bbox(a);
-            let ext = Vector3::new(*k, *k, *k);
-            BBox3::new(ba.min - ext, ba.max + ext)
-        }
-
-        SdfNode::RoundUnion(a, b, r) => {
-            let ba = compute_bbox(a);
-            let bb = compute_bbox(b);
-            let ext = Vector3::new(*r, *r, *r);
-            BBox3::new(
-                Vector3::new(
-                    ba.min.x.min(bb.min.x),
-                    ba.min.y.min(bb.min.y),
-                    ba.min.z.min(bb.min.z),
-                ) - ext,
-                Vector3::new(
-                    ba.max.x.max(bb.max.x),
-                    ba.max.y.max(bb.max.y),
-                    ba.max.z.max(bb.max.z),
-                ) + ext,
-            )
-        }
-
-        SdfNode::RoundIntersection(a, b, r) => {
-            let ba = compute_bbox(a);
-            let bb = compute_bbox(b);
-            let ext = Vector3::new(*r, *r, *r);
-            BBox3::new(
-                Vector3::new(
-                    ba.min.x.max(bb.min.x),
-                    ba.min.y.max(bb.min.y),
-                    ba.min.z.max(bb.min.z),
-                ) - ext,
-                Vector3::new(
-                    ba.max.x.min(bb.max.x),
-                    ba.max.y.min(bb.max.y),
-                    ba.max.z.min(bb.max.z),
-                ) + ext,
-            )
-        }
-
-        SdfNode::RoundDifference(a, _b, r) => {
-            let ba = compute_bbox(a);
-            let ext = Vector3::new(*r, *r, *r);
-            BBox3::new(ba.min - ext, ba.max + ext)
-        }
-
-        SdfNode::ChamferUnion(a, b, k) => {
-            let ba = compute_bbox(a);
-            let bb = compute_bbox(b);
-            let ext = Vector3::new(*k, *k, *k);
-            BBox3::new(
-                Vector3::new(
-                    ba.min.x.min(bb.min.x),
-                    ba.min.y.min(bb.min.y),
-                    ba.min.z.min(bb.min.z),
-                ) - ext,
-                Vector3::new(
-                    ba.max.x.max(bb.max.x),
-                    ba.max.y.max(bb.max.y),
-                    ba.max.z.max(bb.max.z),
-                ) + ext,
-            )
-        }
-
-        SdfNode::ChamferIntersection(a, b, k) => {
-            let ba = compute_bbox(a);
-            let bb = compute_bbox(b);
-            let ext = Vector3::new(*k, *k, *k);
-            BBox3::new(
-                Vector3::new(
-                    ba.min.x.max(bb.min.x),
-                    ba.min.y.max(bb.min.y),
-                    ba.min.z.max(bb.min.z),
-                ) - ext,
-                Vector3::new(
-                    ba.max.x.min(bb.max.x),
-                    ba.max.y.min(bb.max.y),
-                    ba.max.z.min(bb.max.z),
-                ) + ext,
-            )
-        }
-
-        SdfNode::ChamferDifference(a, _b, k) => {
-            let ba = compute_bbox(a);
-            let ext = Vector3::new(*k, *k, *k);
-            BBox3::new(ba.min - ext, ba.max + ext)
-        }
-
-        // -- Targeted Blend ----------------------------------------------------
-        SdfNode::Fillet { inner, profile, .. } | SdfNode::Chamfer { inner, profile, .. } => {
-            let b = compute_bbox(inner);
-            let r = profile.radius();
-            let ext = Vector3::new(r, r, r);
-            BBox3::new(b.min - ext, b.max + ext)
-        }
-
-        // -- Transforms --------------------------------------------------------
-        SdfNode::Translate(inner, offset) => {
-            let b = compute_bbox(inner);
-            BBox3::new(b.min + offset, b.max + offset)
-        }
-
-        SdfNode::Rotate(inner, rotation) => {
-            let b = compute_bbox(inner);
-            // Rotate all 8 corners and compute the new AABB.
-            let corners = b.corners();
-            let mut new_min = Vector3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY);
-            let mut new_max = Vector3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
-            for c in &corners {
-                let rc = rotation * c;
-                new_min.x = new_min.x.min(rc.x);
-                new_min.y = new_min.y.min(rc.y);
-                new_min.z = new_min.z.min(rc.z);
-                new_max.x = new_max.x.max(rc.x);
-                new_max.y = new_max.y.max(rc.y);
-                new_max.z = new_max.z.max(rc.z);
+            for i in 0..n_profile {
+                let t = i as f64 / n_profile as f64;
+                let p2 = profile.evaluate(t);
+                // Revolve: (x, y, 0) in profile → (x·cos(θ), x·sin(θ), y) in 3D
+                let pt = Point3::new(p2.x * cos_t, p2.x * sin_t, p2.y);
+                ring.push(store.add_vertex(Vertex { point: pt }));
             }
-            BBox3::new(new_min, new_max)
+            all_verts.push(ring);
         }
 
-        SdfNode::Scale(inner, factor) => {
-            let b = compute_bbox(inner);
-            BBox3::new(b.min * *factor, b.max * *factor)
+        // Build quad faces between adjacent rings
+        let mut face_ids = Vec::new();
+        for j in 0..n_sweep {
+            for i in 0..n_profile {
+                let i_next = (i + 1) % n_profile;
+
+                let v00 = all_verts[j][i];
+                let v10 = all_verts[j][i_next];
+                let v01 = all_verts[j + 1][i];
+                let v11 = all_verts[j + 1][i_next];
+
+                let face_id = build_quad_face(&mut store, v00, v10, v11, v01);
+                face_ids.push(face_id);
+            }
         }
 
-        SdfNode::Mirror(inner, normal) => {
-            let b = compute_bbox(inner);
-            // The mirror includes the original and the reflected geometry.
-            let corners = b.corners();
-            let mut new_min = b.min;
-            let mut new_max = b.max;
-            for c in &corners {
-                let d = c.dot(normal);
-                // Only reflect points on the negative side
-                if d < 0.0 {
-                    let reflected = c - normal * (2.0 * d);
-                    new_min.x = new_min.x.min(reflected.x);
-                    new_min.y = new_min.y.min(reflected.y);
-                    new_min.z = new_min.z.min(reflected.z);
-                    new_max.x = new_max.x.max(reflected.x);
-                    new_max.y = new_max.y.max(reflected.y);
-                    new_max.z = new_max.z.max(reflected.z);
+        // Cap the ends if it's not a full revolution
+        let is_full = (angle - std::f64::consts::TAU).abs() < 1e-6;
+        if !is_full {
+            // Start cap
+            let start_face = build_fan_face(&mut store, &all_verts[0], true);
+            face_ids.push(start_face);
+            // End cap
+            let end_face = build_fan_face(&mut store, &all_verts[n_sweep], false);
+            face_ids.push(end_face);
+        }
+
+        let shell = store.add_shell(Shell { faces: face_ids });
+        let solid = store.add_solid(Solid {
+            outer_shell: shell,
+            inner_shells: vec![],
+        });
+        Shape { store, solid }
+    }
+
+    // --- Output ---
+
+    /// Generate a triangle mesh from this shape.
+    pub fn mesh(&self, settings: &TessSettings) -> TriangleMesh {
+        tessellate::tessellate_solid(&self.store, self.solid, settings)
+    }
+
+    /// Validate the topology of this shape.
+    pub fn validate(&self) -> ValidationResult {
+        validate_solid(&self.store, self.solid)
+    }
+
+    // --- Export ---
+
+    /// Export as binary STL.
+    pub fn write_stl<W: std::io::Write>(&self, settings: &TessSettings, writer: &mut W) -> std::io::Result<()> {
+        let mesh = self.mesh(settings);
+        crate::export::write_stl(&mesh, writer)
+    }
+
+    /// Export as Wavefront OBJ.
+    pub fn write_obj<W: std::io::Write>(&self, settings: &TessSettings, writer: &mut W) -> std::io::Result<()> {
+        let mesh = self.mesh(settings);
+        crate::export::write_obj(&mesh, writer)
+    }
+
+    /// Export as STEP AP203 (exact geometry, no tessellation).
+    pub fn write_step<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        crate::export::write_step(&self.store, self.solid, writer)
+    }
+
+    /// Export as 3MF model XML.
+    pub fn write_3mf<W: std::io::Write>(&self, settings: &TessSettings, writer: &mut W) -> std::io::Result<()> {
+        let mesh = self.mesh(settings);
+        crate::export::write_3mf(&mesh, writer)
+    }
+}
+
+// --- Internal helpers ---
+
+fn translate_surface(surface: &mut crate::surface::Surface, offset: &Vector3) {
+    use crate::surface::Surface;
+    match surface {
+        Surface::Plane { origin, .. } => *origin += offset,
+        Surface::Cylinder { origin, .. } => *origin += offset,
+        Surface::Cone { apex, .. } => *apex += offset,
+        Surface::Sphere { center, .. } => *center += offset,
+        Surface::Torus { center, .. } => *center += offset,
+        Surface::NurbsSurface(nurbs) => {
+            for row in &mut nurbs.control_points {
+                for pt in row {
+                    *pt += offset;
                 }
             }
-            BBox3::new(new_min, new_max)
-        }
-
-        SdfNode::Shell(inner, thickness) => {
-            let b = compute_bbox(inner);
-            let ext = Vector3::new(*thickness, *thickness, *thickness);
-            BBox3::new(b.min - ext, b.max + ext)
-        }
-
-        SdfNode::Round(inner, radius) => {
-            let b = compute_bbox(inner);
-            let ext = Vector3::new(*radius, *radius, *radius);
-            BBox3::new(b.min - ext, b.max + ext)
-        }
-
-        // -- 2D -> 3D ----------------------------------------------------------
-        SdfNode::Revolve(_) | SdfNode::Extrude(_, _) => {
-            // Conservative fallback for 2D->3D operations.
-            let big = 100.0;
-            BBox3::new(Vector3::new(-big, -big, -big), Vector3::new(big, big, big))
-        }
-
-        // -- Opaque ------------------------------------------------------------
-        SdfNode::Custom(_) => {
-            let big = 100.0;
-            BBox3::new(Vector3::new(-big, -big, -big), Vector3::new(big, big, big))
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Meshing
-// ---------------------------------------------------------------------------
-
-impl Shape {
-    /// Extract a triangle mesh using adaptive dual contouring.
-    pub fn mesh(&self, settings: MeshSettings) -> TriangleMesh {
-        let bbox = self.bounding_box();
-        extract_mesh_adaptive(&self.node, &bbox, &settings)
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Export
-// ---------------------------------------------------------------------------
-
-impl Shape {
-    /// Mesh with default settings and write to a Wavefront OBJ file.
-    pub fn export_obj(&self, path: &str) -> std::io::Result<()> {
-        let mesh = self.mesh(MeshSettings::default());
-        crate::obj_export::write_obj(&mesh, std::path::Path::new(path))
-    }
-
-    /// Mesh with default settings and write to a binary STL file.
-    pub fn export_stl(&self, path: &str) -> std::io::Result<()> {
-        let mesh = self.mesh(MeshSettings::default());
-        crate::export::write_stl(&mesh, std::path::Path::new(path))
-    }
-
-    /// Write a STEP AP203 file using the smart tiered exporter.
-    ///
-    /// Recognized primitives (Sphere, Box3, Cylinder) — optionally wrapped
-    /// in rigid transforms — are written as exact BRep entities. Everything
-    /// else is meshed via adaptive dual contouring and written as tessellated
-    /// ADVANCED_FACE entities.
-    pub fn export_step(&self, path: &str) -> std::io::Result<()> {
-        crate::step_export::write_step_smart(&self.node, std::path::Path::new(path))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Voxelization
-// ---------------------------------------------------------------------------
-
-impl Shape {
-    /// Sample the SDF onto a regular 3D grid with the given `voxel_size`.
-    ///
-    /// The grid covers the shape's bounding box plus one voxel of padding
-    /// on each side. Evaluation is parallelized across voxels with rayon.
-    pub fn voxelize(&self, voxel_size: f64) -> VoxelGrid {
-        debug_assert!(voxel_size > 0.0, "voxel_size must be positive");
-        let bbox = self.bounding_box();
-        let pad = Vector3::new(voxel_size, voxel_size, voxel_size);
-        let origin = bbox.min - pad;
-        let extent = bbox.max + pad - origin;
-
-        let nx = (extent.x / voxel_size).ceil() as usize;
-        let ny = (extent.y / voxel_size).ceil() as usize;
-        let nz = (extent.z / voxel_size).ceil() as usize;
-        let total = nx * ny * nz;
-
-        let node = &self.node;
-        let data: Vec<f32> = (0..total)
-            .into_par_iter()
-            .map(|idx| {
-                let ix = idx / (ny * nz);
-                let iy = (idx / nz) % ny;
-                let iz = idx % nz;
-                let world = origin
-                    + Vector3::new(
-                        (ix as f64 + 0.5) * voxel_size,
-                        (iy as f64 + 0.5) * voxel_size,
-                        (iz as f64 + 0.5) * voxel_size,
-                    );
-                node.evaluate(world) as f32
-            })
-            .collect();
-
-        VoxelGrid {
-            resolution: [nx, ny, nz],
-            voxel_size,
-            origin,
-            data,
+fn translate_curve(curve: &mut crate::curve::Curve3, offset: &Vector3) {
+    use crate::curve::Curve3;
+    match curve {
+        Curve3::Line { origin, .. } => *origin += offset,
+        Curve3::Circle { center, .. } => *center += offset,
+        Curve3::Ellipse { center, .. } => *center += offset,
+        Curve3::NurbsCurve(nurbs) => {
+            for pt in &mut nurbs.control_points {
+                *pt += offset;
+            }
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Access
-// ---------------------------------------------------------------------------
-
-impl Shape {
-    /// Expose the inner DAG node (for STEP export and other introspection).
-    pub fn node(&self) -> &SdfNode {
-        &self.node
+fn apply_rotation(store: &mut TopoStore, rot: &nalgebra::Rotation3<f64>) {
+    for v in &mut store.vertices {
+        v.point = Point3::from(rot * v.point.coords);
     }
+    for face in &mut store.faces {
+        rotate_surface(&mut face.surface, rot);
+    }
+    for edge in &mut store.edges {
+        rotate_curve(&mut edge.curve, rot);
+    }
+}
+
+fn rotate_surface(surface: &mut crate::surface::Surface, rot: &nalgebra::Rotation3<f64>) {
+    use crate::surface::Surface;
+    match surface {
+        Surface::Plane { origin, normal } => {
+            *origin = Point3::from(rot * origin.coords);
+            *normal = rot * *normal;
+        }
+        Surface::Cylinder { origin, axis, .. } => {
+            *origin = Point3::from(rot * origin.coords);
+            *axis = rot * *axis;
+        }
+        Surface::Cone { apex, axis, .. } => {
+            *apex = Point3::from(rot * apex.coords);
+            *axis = rot * *axis;
+        }
+        Surface::Sphere { center, .. } => {
+            *center = Point3::from(rot * center.coords);
+        }
+        Surface::Torus { center, axis, .. } => {
+            *center = Point3::from(rot * center.coords);
+            *axis = rot * *axis;
+        }
+        Surface::NurbsSurface(nurbs) => {
+            for row in &mut nurbs.control_points {
+                for pt in row {
+                    *pt = Point3::from(rot * pt.coords);
+                }
+            }
+        }
+    }
+}
+
+fn rotate_curve(curve: &mut crate::curve::Curve3, rot: &nalgebra::Rotation3<f64>) {
+    use crate::curve::Curve3;
+    match curve {
+        Curve3::Line { origin, dir } => {
+            *origin = Point3::from(rot * origin.coords);
+            *dir = rot * *dir;
+        }
+        Curve3::Circle { center, axis, .. } => {
+            *center = Point3::from(rot * center.coords);
+            *axis = rot * *axis;
+        }
+        Curve3::Ellipse { center, major, minor } => {
+            *center = Point3::from(rot * center.coords);
+            *major = rot * *major;
+            *minor = rot * *minor;
+        }
+        Curve3::NurbsCurve(nurbs) => {
+            for pt in &mut nurbs.control_points {
+                *pt = Point3::from(rot * pt.coords);
+            }
+        }
+    }
+}
+
+fn scale_surface(surface: &mut crate::surface::Surface, factor: f64) {
+    use crate::surface::Surface;
+    match surface {
+        Surface::Plane { origin, .. } => origin.coords *= factor,
+        Surface::Cylinder { origin, radius, .. } => {
+            origin.coords *= factor;
+            *radius *= factor;
+        }
+        Surface::Cone { apex, .. } => apex.coords *= factor,
+        Surface::Sphere { center, radius } => {
+            center.coords *= factor;
+            *radius *= factor;
+        }
+        Surface::Torus { center, major_r, minor_r, .. } => {
+            center.coords *= factor;
+            *major_r *= factor;
+            *minor_r *= factor;
+        }
+        Surface::NurbsSurface(nurbs) => {
+            for row in &mut nurbs.control_points {
+                for pt in row {
+                    pt.coords *= factor;
+                }
+            }
+        }
+    }
+}
+
+fn scale_curve(curve: &mut crate::curve::Curve3, factor: f64) {
+    use crate::curve::Curve3;
+    match curve {
+        Curve3::Line { origin, dir } => {
+            origin.coords *= factor;
+            *dir *= factor;
+        }
+        Curve3::Circle { center, radius, .. } => {
+            center.coords *= factor;
+            *radius *= factor;
+        }
+        Curve3::Ellipse { center, major, minor } => {
+            center.coords *= factor;
+            *major *= factor;
+            *minor *= factor;
+        }
+        Curve3::NurbsCurve(nurbs) => {
+            for pt in &mut nurbs.control_points {
+                pt.coords *= factor;
+            }
+        }
+    }
+}
+
+fn mirror_surface(surface: &mut crate::surface::Surface, s: &Vector3) {
+    use crate::surface::Surface;
+    match surface {
+        Surface::Plane { origin, normal } => {
+            origin.x *= s.x; origin.y *= s.y; origin.z *= s.z;
+            normal.x *= s.x; normal.y *= s.y; normal.z *= s.z;
+        }
+        Surface::Cylinder { origin, axis, .. } => {
+            origin.x *= s.x; origin.y *= s.y; origin.z *= s.z;
+            axis.x *= s.x; axis.y *= s.y; axis.z *= s.z;
+        }
+        Surface::Cone { apex, axis, .. } => {
+            apex.x *= s.x; apex.y *= s.y; apex.z *= s.z;
+            axis.x *= s.x; axis.y *= s.y; axis.z *= s.z;
+        }
+        Surface::Sphere { center, .. } => {
+            center.x *= s.x; center.y *= s.y; center.z *= s.z;
+        }
+        Surface::Torus { center, axis, .. } => {
+            center.x *= s.x; center.y *= s.y; center.z *= s.z;
+            axis.x *= s.x; axis.y *= s.y; axis.z *= s.z;
+        }
+        Surface::NurbsSurface(nurbs) => {
+            for row in &mut nurbs.control_points {
+                for pt in row {
+                    pt.x *= s.x; pt.y *= s.y; pt.z *= s.z;
+                }
+            }
+        }
+    }
+}
+
+fn mirror_curve(curve: &mut crate::curve::Curve3, s: &Vector3) {
+    use crate::curve::Curve3;
+    match curve {
+        Curve3::Line { origin, dir } => {
+            origin.x *= s.x; origin.y *= s.y; origin.z *= s.z;
+            dir.x *= s.x; dir.y *= s.y; dir.z *= s.z;
+        }
+        Curve3::Circle { center, axis, .. } => {
+            center.x *= s.x; center.y *= s.y; center.z *= s.z;
+            axis.x *= s.x; axis.y *= s.y; axis.z *= s.z;
+        }
+        Curve3::Ellipse { center, major, minor } => {
+            center.x *= s.x; center.y *= s.y; center.z *= s.z;
+            major.x *= s.x; major.y *= s.y; major.z *= s.z;
+            minor.x *= s.x; minor.y *= s.y; minor.z *= s.z;
+        }
+        Curve3::NurbsCurve(nurbs) => {
+            for pt in &mut nurbs.control_points {
+                pt.x *= s.x; pt.y *= s.y; pt.z *= s.z;
+            }
+        }
+    }
+}
+
+/// Build an extruded solid from bottom and top polygon rings.
+fn build_extrusion(bottom: Vec<Point3>, top: Vec<Point3>, depth: f64) -> Shape {
+    let n = bottom.len();
+    let mut store = TopoStore::new();
+
+    let bottom_vids: Vec<VertexId> = bottom
+        .iter()
+        .map(|p| store.add_vertex(Vertex { point: *p }))
+        .collect();
+    let top_vids: Vec<VertexId> = top
+        .iter()
+        .map(|p| store.add_vertex(Vertex { point: *p }))
+        .collect();
+
+    let mut face_ids = Vec::new();
+
+    // Side faces (quads)
+    for i in 0..n {
+        let i_next = (i + 1) % n;
+        let face_id = build_quad_face(
+            &mut store,
+            bottom_vids[i],
+            bottom_vids[i_next],
+            top_vids[i_next],
+            top_vids[i],
+        );
+        face_ids.push(face_id);
+    }
+
+    // Bottom cap (fan)
+    let bottom_face = build_fan_face(&mut store, &bottom_vids, false);
+    face_ids.push(bottom_face);
+
+    // Top cap (fan)
+    let top_face = build_fan_face(&mut store, &top_vids, true);
+    face_ids.push(top_face);
+
+    let shell = store.add_shell(Shell { faces: face_ids });
+    let solid = store.add_solid(Solid {
+        outer_shell: shell,
+        inner_shells: vec![],
+    });
+    Shape { store, solid }
+}
+
+/// Build a quad face from 4 vertices (v0→v1→v2→v3 in CCW order).
+fn build_quad_face(
+    store: &mut TopoStore,
+    v0: VertexId,
+    v1: VertexId,
+    v2: VertexId,
+    v3: VertexId,
+) -> FaceId {
+    use crate::curve::{Curve2, Curve3};
+    use crate::math::{Point2, Vector2};
+
+    let p0 = store.vertex(v0).point;
+    let p1 = store.vertex(v1).point;
+    let p2 = store.vertex(v2).point;
+    let p3 = store.vertex(v3).point;
+
+    // Compute face normal from vertices
+    let e1 = p1 - p0;
+    let e2 = p3 - p0;
+    let normal = e1.cross(&e2);
+    let len = normal.norm();
+    let normal = if len > 1e-15 { normal / len } else { Vector3::new(0.0, 0.0, 1.0) };
+
+    let surface = crate::surface::Surface::Plane {
+        origin: p0,
+        normal,
+    };
+
+    // 4 edges
+    let edges = [
+        store.add_edge(Edge {
+            curve: Curve3::Line { origin: p0, dir: p1 - p0 },
+            t_start: 0.0, t_end: 1.0, start: v0, end: v1,
+        }),
+        store.add_edge(Edge {
+            curve: Curve3::Line { origin: p1, dir: p2 - p1 },
+            t_start: 0.0, t_end: 1.0, start: v1, end: v2,
+        }),
+        store.add_edge(Edge {
+            curve: Curve3::Line { origin: p2, dir: p3 - p2 },
+            t_start: 0.0, t_end: 1.0, start: v2, end: v3,
+        }),
+        store.add_edge(Edge {
+            curve: Curve3::Line { origin: p3, dir: p0 - p3 },
+            t_start: 0.0, t_end: 1.0, start: v3, end: v0,
+        }),
+    ];
+
+    let face_id = store.add_face(Face {
+        surface,
+        outer_wire: WireId(0),
+        inner_wires: vec![],
+        outward: true,
+    });
+
+    let mut coedge_ids = Vec::with_capacity(4);
+    for (i, &edge_id) in edges.iter().enumerate() {
+        let pcurve = Curve2::Line {
+            origin: Point2::new(i as f64 / 4.0, 0.0),
+            dir: Vector2::new(0.25, 0.0),
+        };
+        coedge_ids.push(store.add_coedge(CoEdge {
+            edge: edge_id,
+            forward: true,
+            pcurve,
+            next: CoEdgeId(0),
+            face: face_id,
+        }));
+    }
+
+    for i in 0..4 {
+        store.coedge_mut(coedge_ids[i]).next = coedge_ids[(i + 1) % 4];
+    }
+
+    let wire = store.add_wire(Wire { first_coedge: coedge_ids[0] });
+    store.face_mut(face_id).outer_wire = wire;
+    face_id
+}
+
+/// Build a fan-triangulated planar face from a vertex ring.
+fn build_fan_face(store: &mut TopoStore, vids: &[VertexId], outward_up: bool) -> FaceId {
+    use crate::curve::{Curve2, Curve3};
+    use crate::math::{Point2, Vector2};
+
+    let n = vids.len();
+    let p0 = store.vertex(vids[0]).point;
+    let p1 = store.vertex(vids[1]).point;
+    let p_last = store.vertex(vids[n - 1]).point;
+
+    let e1 = p1 - p0;
+    let e2 = p_last - p0;
+    let mut normal = e1.cross(&e2);
+    let len = normal.norm();
+    if len > 1e-15 {
+        normal /= len;
+    }
+    if !outward_up {
+        normal = -normal;
+    }
+
+    let surface = crate::surface::Surface::Plane {
+        origin: p0,
+        normal,
+    };
+
+    // Create edges around the polygon
+    let mut edges = Vec::with_capacity(n);
+    for i in 0..n {
+        let i_next = (i + 1) % n;
+        let pa = store.vertex(vids[i]).point;
+        let pb = store.vertex(vids[i_next]).point;
+        edges.push(store.add_edge(Edge {
+            curve: Curve3::Line { origin: pa, dir: pb - pa },
+            t_start: 0.0, t_end: 1.0,
+            start: vids[i], end: vids[i_next],
+        }));
+    }
+
+    let face_id = store.add_face(Face {
+        surface,
+        outer_wire: WireId(0),
+        inner_wires: vec![],
+        outward: outward_up,
+    });
+
+    let mut coedge_ids = Vec::with_capacity(n);
+    for (i, &edge_id) in edges.iter().enumerate() {
+        let pcurve = Curve2::Line {
+            origin: Point2::new(i as f64 / n as f64, 0.0),
+            dir: Vector2::new(1.0 / n as f64, 0.0),
+        };
+        coedge_ids.push(store.add_coedge(CoEdge {
+            edge: edge_id,
+            forward: outward_up,
+            pcurve,
+            next: CoEdgeId(0),
+            face: face_id,
+        }));
+    }
+
+    for i in 0..n {
+        store.coedge_mut(coedge_ids[i]).next = coedge_ids[(i + 1) % n];
+    }
+
+    let wire = store.add_wire(Wire { first_coedge: coedge_ids[0] });
+    store.face_mut(face_id).outer_wire = wire;
+    face_id
 }

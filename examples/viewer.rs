@@ -1,565 +1,269 @@
-use nalgebra::Rotation3;
-use nalgebra::Unit;
-use nalgebra::{Vector2, Vector3};
-use std::f64::consts::PI;
-use std::path::PathBuf;
+//! B-Rep Kernel Test Server
+//!
+//! Serves a Three.js viewer that showcases every capability of the Crusst v1.4
+//! B-Rep kernel: all primitives, transforms, profile operations, and exports.
+//!
+//! Run: `cargo run --example viewer`
+//! Open: http://localhost:8080
 
-use crusst::blend;
 use crusst::builder::Shape;
-use crusst::feature::ft;
-use crusst::mesh::extract_mesh;
-use crusst::obj_export::write_obj;
-use crusst::shape::*;
-use crusst::types::MeshSettings;
-
+use crusst::profile::Profile;
+use crusst::types::TessSettings;
+use std::f64::consts::TAU;
 use tiny_http::{Header, Response, Server};
 
-/// Generate all showcase OBJ files into the output directory.
-fn generate_models(dir: &PathBuf) {
-    println!("Generating models...");
-    std::fs::create_dir_all(dir).unwrap();
+/// All demo shapes the server can produce.
+fn build_shape(name: &str) -> Option<Shape> {
+    Some(match name {
+        // ─── Primitives ───
+        "box"      => Shape::box3(5.0, 3.0, 8.0),
+        "sphere"   => Shape::sphere(10.0),
+        "cylinder" => Shape::cylinder(5.0, 20.0),
+        "cone"     => Shape::cone(8.0, 2.0, 20.0),
+        "torus"    => Shape::torus(10.0, 3.0),
+        "wedge"    => Shape::wedge(5.0, 4.0, 10.0),
+        "capsule"  => Shape::capsule(3.0, 12.0),
 
-    #[allow(clippy::type_complexity)]
-    let models: Vec<(&str, Box<dyn Sdf>, Vector3<f64>, Vector3<f64>)> = vec![
-        // Primitives
-        (
-            "01_sphere",
-            Box::new(Sphere::new(Vector3::zeros(), 10.0)),
-            Vector3::from_element(-12.0),
-            Vector3::from_element(12.0),
-        ),
-        (
-            "02_box",
-            Box::new(Box3::new(Vector3::zeros(), Vector3::new(5.0, 3.0, 8.0))),
-            Vector3::new(-7.0, -5.0, -10.0),
-            Vector3::new(7.0, 5.0, 10.0),
-        ),
-        (
-            "03_cylinder",
-            Box::new(Cylinder::new(
-                Vector3::zeros(),
-                Vector3::new(0.0, 0.0, 1.0),
-                5.0,
-                20.0,
-            )),
-            Vector3::new(-7.0, -7.0, -2.0),
-            Vector3::new(7.0, 7.0, 22.0),
-        ),
-        (
-            "04_capped_cone",
-            Box::new(CappedCone::new(
-                Vector3::zeros(),
-                Vector3::new(0.0, 0.0, 20.0),
-                8.0,
-                2.0,
-            )),
-            Vector3::new(-10.0, -10.0, -2.0),
-            Vector3::new(10.0, 10.0, 22.0),
-        ),
-        (
-            "05_torus",
-            Box::new(Torus::new(Vector3::zeros(), 10.0, 3.0)),
-            Vector3::new(-15.0, -5.0, -15.0),
-            Vector3::new(15.0, 5.0, 15.0),
-        ),
-        (
-            "06_rounded_box",
-            Box::new(RoundedBox::new(
-                Vector3::zeros(),
-                Vector3::new(5.0, 3.0, 8.0),
-                1.0,
-            )),
-            Vector3::new(-8.0, -6.0, -11.0),
-            Vector3::new(8.0, 6.0, 11.0),
-        ),
-        (
-            "07_capsule",
-            Box::new(Capsule::new(
-                Vector3::zeros(),
-                Vector3::new(0.0, 0.0, 20.0),
-                4.0,
-            )),
-            Vector3::new(-6.0, -6.0, -6.0),
-            Vector3::new(6.0, 6.0, 26.0),
-        ),
-        (
-            "08_ellipsoid",
-            Box::new(Ellipsoid::new(
-                Vector3::zeros(),
-                Vector3::new(10.0, 5.0, 3.0),
-            )),
-            Vector3::new(-12.0, -7.0, -5.0),
-            Vector3::new(12.0, 7.0, 5.0),
-        ),
-        (
-            "09_rounded_cylinder",
-            Box::new(RoundedCylinder::new(Vector3::zeros(), 6.0, 1.0, 10.0)),
-            Vector3::new(-9.0, -13.0, -9.0),
-            Vector3::new(9.0, 13.0, 9.0),
-        ),
-        // Boolean operations
-        (
-            "10_boolean_union",
-            Box::new(Union::new(
-                Sphere::new(Vector3::new(-3.0, 0.0, 0.0), 5.0),
-                Sphere::new(Vector3::new(3.0, 0.0, 0.0), 5.0),
-            )),
-            Vector3::from_element(-10.0),
-            Vector3::from_element(10.0),
-        ),
-        (
-            "11_boolean_intersection",
-            Box::new(Intersection::new(
-                Sphere::new(Vector3::new(-2.0, 0.0, 0.0), 5.0),
-                Sphere::new(Vector3::new(2.0, 0.0, 0.0), 5.0),
-            )),
-            Vector3::from_element(-8.0),
-            Vector3::from_element(8.0),
-        ),
-        (
-            "12_boolean_difference",
-            Box::new(Difference::new(
-                Box3::new(Vector3::zeros(), Vector3::new(10.0, 10.0, 10.0)),
-                Sphere::new(Vector3::zeros(), 7.0),
-            )),
-            Vector3::from_element(-12.0),
-            Vector3::from_element(12.0),
-        ),
-        // Smooth booleans
-        (
-            "13_smooth_union",
-            Box::new(SmoothUnion::new(
-                Sphere::new(Vector3::new(-4.0, 0.0, 0.0), 5.0),
-                Sphere::new(Vector3::new(4.0, 0.0, 0.0), 5.0),
-                2.0,
-            )),
-            Vector3::from_element(-11.0),
-            Vector3::from_element(11.0),
-        ),
-        (
-            "14_smooth_intersection",
-            Box::new(SmoothIntersection::new(
-                Sphere::new(Vector3::new(-2.0, 0.0, 0.0), 6.0),
-                Sphere::new(Vector3::new(2.0, 0.0, 0.0), 6.0),
-                2.0,
-            )),
-            Vector3::from_element(-8.0),
-            Vector3::from_element(8.0),
-        ),
-        (
-            "15_smooth_difference",
-            Box::new(SmoothDifference::new(
-                Box3::new(Vector3::zeros(), Vector3::new(8.0, 8.0, 8.0)),
-                Sphere::new(Vector3::zeros(), 6.0),
-                1.5,
-            )),
-            Vector3::from_element(-10.0),
-            Vector3::from_element(10.0),
-        ),
-        // Transforms — each shows original (at origin) + transformed copy side by side
+        // ─── Transforms ───
+        "translate" => Shape::box3(5.0, 3.0, 8.0).translate(10.0, 5.0, 0.0),
+        "rotate"    => Shape::box3(8.0, 2.0, 2.0).rotate_z(std::f64::consts::FRAC_PI_4),
+        "scale"     => Shape::box3(3.0, 3.0, 3.0).scale(3.0),
+        "mirror"    => Shape::box3(5.0, 3.0, 8.0).translate(10.0, 0.0, 0.0).mirror_x(),
 
-        // Translate: original box at origin + translated copy offset to the right
-        (
-            "16_translate",
-            Box::new(Union::new(
-                Box3::new(Vector3::zeros(), Vector3::new(4.0, 4.0, 4.0)),
-                Translate::new(
-                    Box3::new(Vector3::zeros(), Vector3::new(4.0, 4.0, 4.0)),
-                    Vector3::new(18.0, 0.0, 0.0),
-                ),
-            )),
-            Vector3::new(-6.0, -6.0, -6.0),
-            Vector3::new(24.0, 6.0, 6.0),
+        // ─── Profiles ───
+        "extrude_rect" => Shape::extrude(&Profile::rect(6.0, 4.0), 15.0),
+        "extrude_tri"  => Shape::extrude(
+            &Profile::polygon(&[
+                nalgebra::Point2::new(0.0, 0.0),
+                nalgebra::Point2::new(8.0, 0.0),
+                nalgebra::Point2::new(4.0, 6.0),
+            ]),
+            12.0,
         ),
-        // Rotate: two boxes unioned at 45° — demonstrates the Rotate transform
-        (
-            "17_rotate",
-            Box::new(Union::new(
-                Box3::new(Vector3::zeros(), Vector3::new(12.0, 2.0, 2.0)),
-                Rotate::new(
-                    Box3::new(Vector3::zeros(), Vector3::new(12.0, 2.0, 2.0)),
-                    Rotation3::from_axis_angle(
-                        &Unit::new_normalize(Vector3::new(0.0, 0.0, 1.0)),
-                        PI / 4.0,
-                    ),
-                ),
-            )),
-            Vector3::new(-14.0, -14.0, -4.0),
-            Vector3::new(14.0, 14.0, 4.0),
-        ),
-        // Scale: small sphere at origin + large scaled sphere offset so both visible
-        (
-            "18_scale",
-            Box::new(Union::new(
-                Sphere::new(Vector3::new(-10.0, 0.0, 0.0), 4.0),
-                Translate::new(
-                    Scale::new(Sphere::new(Vector3::zeros(), 4.0), 2.5),
-                    Vector3::new(10.0, 0.0, 0.0),
-                ),
-            )),
-            Vector3::new(-16.0, -12.0, -12.0),
-            Vector3::new(22.0, 12.0, 12.0),
-        ),
-        // Mirror: L-bracket (asymmetric!) + its mirror — chirality is clearly visible
-        // The L-bracket is a union of two boxes forming an L shape
-        (
-            "19_mirror",
-            {
-                // L-bracket: vertical arm + horizontal foot (asymmetric shape)
-                let l_bracket = Union::new(
-                    Box3::new(Vector3::new(7.0, 5.0, 0.0), Vector3::new(2.0, 5.0, 2.0)), // vertical arm
-                    Box3::new(Vector3::new(10.0, 1.0, 0.0), Vector3::new(5.0, 1.0, 2.0)), // horizontal foot
-                );
-                // Show original + mirror across YZ plane (x=0)
-                let mirrored: Box<dyn Sdf> = Box::new(Mirror::new(
-                    Union::new(
-                        Box3::new(Vector3::new(7.0, 5.0, 0.0), Vector3::new(2.0, 5.0, 2.0)),
-                        Box3::new(Vector3::new(10.0, 1.0, 0.0), Vector3::new(5.0, 1.0, 2.0)),
-                    ),
-                    Vector3::new(1.0, 0.0, 0.0),
-                ));
-                let combined: Box<dyn Sdf> = Box::new(Union::new(
-                    l_bracket,
-                    FnSdf::new(move |p| mirrored.evaluate(p)),
-                ));
-                combined
-            },
-            Vector3::new(-17.0, -2.0, -4.0),
-            Vector3::new(17.0, 12.0, 4.0),
-        ),
-        (
-            "20_shell",
-            Box::new(Shell::new(Sphere::new(Vector3::zeros(), 10.0), 1.0)),
-            Vector3::from_element(-13.0),
-            Vector3::from_element(13.0),
-        ),
-        // Revolve: a 2D L-profile revolved around Y axis → a vase/cup shape
-        (
-            "20b_revolve",
-            {
-                // 2D profile: rectangle forming the wall of a cup
-                // Outer wall at x=8..10, y=0..15 (r=8..10, height 15)
-                // Bottom at x=0..10, y=-1..0
-                let profile = Union2d::new(
-                    Rect2d::new(Vector2::new(9.0, 7.5), Vector2::new(1.0, 7.5)), // wall
-                    Rect2d::new(Vector2::new(5.0, -0.5), Vector2::new(5.0, 0.5)), // bottom
-                );
-                let cup: Box<dyn Sdf> = Box::new(Revolve::new(profile));
-                cup
-            },
-            Vector3::new(-13.0, -3.0, -13.0),
-            Vector3::new(13.0, 18.0, 13.0),
-        ),
-        // Extrude: a 2D cross profile extruded along Z → a plus-sign beam
-        (
-            "20c_extrude",
-            {
-                let cross = Union2d::new(
-                    Rect2d::new(Vector2::new(0.0, 0.0), Vector2::new(8.0, 2.0)), // horizontal bar
-                    Rect2d::new(Vector2::new(0.0, 0.0), Vector2::new(2.0, 8.0)), // vertical bar
-                );
-                let beam: Box<dyn Sdf> = Box::new(Extrude::new(cross, 12.0));
-                beam
-            },
-            Vector3::new(-10.0, -10.0, -14.0),
-            Vector3::new(10.0, 10.0, 14.0),
-        ),
-        // Composed shapes
-        (
-            "21_mounting_bracket",
-            Box::new(Difference::new(
-                Union::new(
-                    Union::new(
-                        Box3::new(Vector3::zeros(), Vector3::new(20.0, 2.0, 15.0)),
-                        Capsule::new(
-                            Vector3::new(-12.0, 2.0, 0.0),
-                            Vector3::new(-12.0, 15.0, 0.0),
-                            3.0,
-                        ),
-                    ),
-                    Capsule::new(
-                        Vector3::new(12.0, 2.0, 0.0),
-                        Vector3::new(12.0, 15.0, 0.0),
-                        3.0,
-                    ),
-                ),
-                Cylinder::new(
-                    Vector3::new(0.0, -5.0, 0.0),
-                    Vector3::new(0.0, 1.0, 0.0),
-                    5.0,
-                    14.0,
-                ),
-            )),
-            Vector3::new(-18.0, -4.0, -18.0),
-            Vector3::new(18.0, 18.0, 18.0),
-        ),
-        (
-            "22_pipe_tee",
-            Box::new(Difference::new(
-                SmoothUnion::new(
-                    Capsule::new(
-                        Vector3::new(-15.0, 0.0, 0.0),
-                        Vector3::new(15.0, 0.0, 0.0),
-                        5.0,
-                    ),
-                    Capsule::new(
-                        Vector3::new(0.0, 0.0, 0.0),
-                        Vector3::new(0.0, 15.0, 0.0),
-                        5.0,
-                    ),
-                    1.5,
-                ),
-                Union::new(
-                    Capsule::new(
-                        Vector3::new(-16.0, 0.0, 0.0),
-                        Vector3::new(16.0, 0.0, 0.0),
-                        3.0,
-                    ),
-                    Capsule::new(
-                        Vector3::new(0.0, -1.0, 0.0),
-                        Vector3::new(0.0, 16.0, 0.0),
-                        3.0,
-                    ),
-                ),
-            )),
-            Vector3::new(-18.0, -3.0, -8.0),
-            Vector3::new(18.0, 18.0, 8.0),
-        ),
-        (
-            "23_gasket_ring",
-            Box::new(Intersection::new(
-                Torus::new(Vector3::zeros(), 12.0, 4.0),
-                Box3::new(Vector3::zeros(), Vector3::new(20.0, 2.0, 20.0)),
-            )),
-            Vector3::new(-18.0, -4.0, -18.0),
-            Vector3::new(18.0, 4.0, 18.0),
-        ),
-        (
-            "24_rounded_enclosure",
-            Box::new(Difference::new(
-                Difference::new(
-                    RoundedBox::new(Vector3::zeros(), Vector3::new(15.0, 8.0, 10.0), 2.0),
-                    Box3::new(Vector3::new(0.0, 1.0, 0.0), Vector3::new(13.0, 7.0, 8.0)),
-                ),
-                Cylinder::new(
-                    Vector3::new(15.0, 0.0, 0.0),
-                    Vector3::new(1.0, 0.0, 0.0),
-                    3.0,
-                    10.0,
-                ),
-            )),
-            Vector3::new(-19.0, -12.0, -14.0),
-            Vector3::new(19.0, 12.0, 14.0),
-        ),
-        (
-            "25_organic_blob",
-            Box::new(SmoothUnion::new(
-                SmoothUnion::new(
-                    Sphere::new(Vector3::new(0.0, 0.0, 0.0), 6.0),
-                    Sphere::new(Vector3::new(5.0, 4.0, 0.0), 4.0),
-                    3.0,
-                ),
-                SmoothUnion::new(
-                    Sphere::new(Vector3::new(-4.0, 5.0, 3.0), 3.5),
-                    Sphere::new(Vector3::new(2.0, -3.0, 5.0), 3.0),
-                    3.0,
-                ),
-                3.0,
-            )),
-            Vector3::from_element(-12.0),
-            Vector3::from_element(12.0),
-        ),
-        (
-            "26_rotated_star",
-            Box::new(Union::new(
-                Union::new(
-                    Box3::new(Vector3::zeros(), Vector3::new(8.0, 2.0, 2.0)),
-                    Rotate::new(
-                        Box3::new(Vector3::zeros(), Vector3::new(8.0, 2.0, 2.0)),
-                        Rotation3::from_axis_angle(
-                            &Unit::new_normalize(Vector3::new(0.0, 0.0, 1.0)),
-                            PI / 3.0,
-                        ),
-                    ),
-                ),
-                Rotate::new(
-                    Box3::new(Vector3::zeros(), Vector3::new(8.0, 2.0, 2.0)),
-                    Rotation3::from_axis_angle(
-                        &Unit::new_normalize(Vector3::new(0.0, 0.0, 1.0)),
-                        2.0 * PI / 3.0,
-                    ),
-                ),
-            )),
-            Vector3::from_element(-11.0),
-            Vector3::from_element(11.0),
-        ),
-        (
-            "27_bearing_housing",
-            Box::new(Difference::new(
-                Difference::new(
-                    Capsule::new(Vector3::zeros(), Vector3::new(0.0, 20.0, 0.0), 12.0),
-                    Capsule::new(
-                        Vector3::new(0.0, -2.0, 0.0),
-                        Vector3::new(0.0, 22.0, 0.0),
-                        8.0,
-                    ),
-                ),
-                Translate::new(
-                    Rotate::new(
-                        Torus::new(Vector3::zeros(), 8.0, 1.5),
-                        Rotation3::from_axis_angle(
-                            &Unit::new_normalize(Vector3::new(1.0, 0.0, 0.0)),
-                            PI / 2.0,
-                        ),
-                    ),
-                    Vector3::new(0.0, 10.0, 0.0),
-                ),
-            )),
-            Vector3::new(-15.0, -3.0, -15.0),
-            Vector3::new(15.0, 23.0, 15.0),
-        ),
-    ];
+        "revolve_rect" => Shape::revolve(&Profile::rect(3.0, 1.5), TAU),
+        "revolve_half" => Shape::revolve(&Profile::rect(3.0, 1.5), std::f64::consts::PI),
 
-    for (name, shape, bbox_min, bbox_max) in &models {
-        print!("  {} ... ", name);
-        let mesh = extract_mesh(shape.as_ref(), *bbox_min, *bbox_max, 128);
-        let path = dir.join(format!("{}.obj", name));
-        write_obj(&mesh, &path).unwrap();
-        println!(
-            "{} tris, {} verts",
-            mesh.indices.len() / 3,
-            mesh.vertices.len()
-        );
-    }
+        // ─── Combined / stress tests ───
+        "tall_cylinder" => Shape::cylinder(2.0, 50.0),
+        "flat_box"      => Shape::box3(20.0, 20.0, 0.5),
+        "thin_torus"    => Shape::torus(15.0, 0.5),
+        "fat_torus"     => Shape::torus(6.0, 5.0),
+        "tiny_sphere"   => Shape::sphere(0.5),
+        "big_sphere"    => Shape::sphere(50.0),
+        "needle_cone"   => Shape::cone(10.0, 0.1, 30.0),
+        "disk_cone"     => Shape::cone(10.0, 10.0, 1.0),
 
-    // Fillet / chamfer showcase models (using the builder API)
-    let settings = MeshSettings::default();
-    let builder_models: Vec<(&str, Shape)> = vec![
-        // Box3 with G2 fillet on all edges
-        (
-            "30_filleted_box",
-            Shape::box3(5.0, 5.0, 5.0).fillet(blend::g2(1.0), vec![ft(0, 0).all_edges()]),
-        ),
-        // Box3 with equal chamfer on all edges
-        (
-            "31_chamfered_box",
-            Shape::box3(5.0, 5.0, 5.0)
-                .chamfer(blend::equal_chamfer(1.0), vec![ft(0, 0).all_edges()]),
-        ),
-        // Two spheres with round union
-        (
-            "32_round_union",
-            Shape::sphere(5.0).round_union(Shape::sphere(5.0).translate(7.0, 0.0, 0.0), 1.5),
-        ),
-        // Box minus cylinder with round fillet
-        (
-            "33_round_subtract",
-            Shape::box3(5.0, 5.0, 5.0)
-                .round_subtract(Shape::cylinder(3.0, 15.0).translate(0.0, -2.5, 0.0), 1.0),
-        ),
-        // Box with fillet only on top face edges (+Y edges: 0, 4, 8, 9)
-        (
-            "34_selective_fillet",
-            Shape::box3(5.0, 5.0, 5.0).fillet(blend::g2(1.0), vec![ft(0, 0).edges(&[0, 4, 8, 9])]),
-        ),
-        // Box3 with simple round (Minkowski offset)
-        (
-            "35_rounded_box_simple",
-            Shape::box3(5.0, 5.0, 5.0).round(0.5),
-        ),
-        // ─── Rotated union (builder API — analytical gradients for clean edges) ───
-        (
-            "17b_rotated_union",
-            Shape::box3(12.0, 2.0, 2.0).union(Shape::box3(12.0, 2.0, 2.0).rotate_z(PI / 4.0)),
-        ),
-        // ─── Profile comparison series: each profile on the same 5×5×5 box ───
-        // G1 tangent-continuous fillet
-        (
-            "36_g1_fillet_box",
-            Shape::box3(5.0, 5.0, 5.0).fillet(blend::g1(1.0), vec![ft(0, 0).all_edges()]),
-        ),
-        // G3 curvature-rate continuous fillet
-        (
-            "37_g3_fillet_box",
-            Shape::box3(5.0, 5.0, 5.0).fillet(blend::g3(1.0), vec![ft(0, 0).all_edges()]),
-        ),
-        // Parabolic fillet
-        (
-            "38_parabolic_fillet_box",
-            Shape::box3(5.0, 5.0, 5.0).fillet(blend::parabolic(1.0), vec![ft(0, 0).all_edges()]),
-        ),
-        // Hyperbolic fillet (asymptote 0.5 gives a concave profile)
-        (
-            "39_hyperbolic_fillet_box",
-            Shape::box3(5.0, 5.0, 5.0)
-                .fillet(blend::hyperbolic(1.0, 0.5), vec![ft(0, 0).all_edges()]),
-        ),
-        // Cycloidal fillet
-        (
-            "40_cycloidal_fillet_box",
-            Shape::box3(5.0, 5.0, 5.0).fillet(blend::cycloidal(1.0), vec![ft(0, 0).all_edges()]),
-        ),
-    ];
-
-    let total_models = models.len() + builder_models.len();
-
-    for (name, shape) in &builder_models {
-        print!("  {} ... ", name);
-        let mesh = shape.mesh(settings);
-        let path = dir.join(format!("{}.obj", name));
-        write_obj(&mesh, &path).unwrap();
-        println!(
-            "{} tris, {} verts",
-            mesh.indices.len() / 3,
-            mesh.vertices.len()
-        );
-    }
-
-    println!("Done — {} models generated.\n", total_models);
+        _ => return None,
+    })
 }
 
-fn content_type(path: &str) -> &'static str {
-    if path.ends_with(".html") {
-        "text/html; charset=utf-8"
-    } else if path.ends_with(".js") {
-        "application/javascript"
-    } else if path.ends_with(".css") {
-        "text/css"
-    } else if path.ends_with(".obj") {
-        "text/plain"
-    } else {
-        "application/octet-stream"
+/// Shape metadata for the gallery.
+struct ShapeMeta {
+    name: &'static str,
+    label: &'static str,
+    category: &'static str,
+}
+
+fn shape_gallery() -> Vec<ShapeMeta> {
+    vec![
+        ShapeMeta { name: "box",        label: "Box",          category: "Primitives" },
+        ShapeMeta { name: "sphere",     label: "Sphere",       category: "Primitives" },
+        ShapeMeta { name: "cylinder",   label: "Cylinder",     category: "Primitives" },
+        ShapeMeta { name: "cone",       label: "Cone",         category: "Primitives" },
+        ShapeMeta { name: "torus",      label: "Torus",        category: "Primitives" },
+        ShapeMeta { name: "wedge",      label: "Wedge",        category: "Primitives" },
+        ShapeMeta { name: "capsule",    label: "Capsule",      category: "Primitives" },
+
+        ShapeMeta { name: "translate",  label: "Translate",    category: "Transforms" },
+        ShapeMeta { name: "rotate",     label: "Rotate Z 45°", category: "Transforms" },
+        ShapeMeta { name: "scale",      label: "Scale 3×",     category: "Transforms" },
+        ShapeMeta { name: "mirror",     label: "Mirror X",     category: "Transforms" },
+
+        ShapeMeta { name: "extrude_rect", label: "Extrude Rect", category: "Profiles" },
+        ShapeMeta { name: "extrude_tri",  label: "Extrude Tri",  category: "Profiles" },
+        ShapeMeta { name: "revolve_rect", label: "Revolve 360°", category: "Profiles" },
+        ShapeMeta { name: "revolve_half", label: "Revolve 180°", category: "Profiles" },
+
+        ShapeMeta { name: "tall_cylinder", label: "Tall Cylinder",  category: "Stress" },
+        ShapeMeta { name: "flat_box",      label: "Flat Box",       category: "Stress" },
+        ShapeMeta { name: "thin_torus",    label: "Thin Torus",     category: "Stress" },
+        ShapeMeta { name: "fat_torus",     label: "Fat Torus",      category: "Stress" },
+        ShapeMeta { name: "tiny_sphere",   label: "Tiny Sphere",    category: "Stress" },
+        ShapeMeta { name: "big_sphere",    label: "Big Sphere",     category: "Stress" },
+        ShapeMeta { name: "needle_cone",   label: "Needle Cone",    category: "Stress" },
+        ShapeMeta { name: "disk_cone",     label: "Disk (r1=r2)",   category: "Stress" },
+    ]
+}
+
+fn parse_settings(query: &str) -> TessSettings {
+    let mut settings = TessSettings {
+        chord_tolerance: 0.02,
+        max_edge_length: 5.0,
+        min_subdivisions: 8,
+    };
+    for pair in query.split('&') {
+        let mut kv = pair.splitn(2, '=');
+        let key = kv.next().unwrap_or("");
+        let val = kv.next().unwrap_or("");
+        match key {
+            "chord" => if let Ok(v) = val.parse::<f64>() { settings.chord_tolerance = v; },
+            "maxedge" => if let Ok(v) = val.parse::<f64>() { settings.max_edge_length = v; },
+            "minsub" => if let Ok(v) = val.parse::<u32>() { settings.min_subdivisions = v; },
+            _ => {}
+        }
     }
+    settings
 }
 
 fn main() {
-    let out_dir = PathBuf::from("viewer");
-
-    // Generate OBJ files
-    generate_models(&out_dir);
-
     let addr = "0.0.0.0:8080";
-    let server = Server::http(addr).expect("Failed to start server");
-    println!("Crusst Viewer running at http://localhost:8080");
-    println!("Press Ctrl+C to stop.\n");
+    let server = Server::http(addr).expect("Failed to start HTTP server");
+    println!("╔════════════════════════════════════════════╗");
+    println!("║   Crusst v1.4 B-Rep Kernel Test Server    ║");
+    println!("║   http://localhost:8080                    ║");
+    println!("║   Press Ctrl+C to stop                    ║");
+    println!("╚════════════════════════════════════════════╝");
 
     for request in server.incoming_requests() {
         let url = request.url().to_string();
-        let file_path = if url == "/" {
-            out_dir.join("index.html")
-        } else {
-            out_dir.join(url.trim_start_matches('/'))
-        };
+        let (path, query) = url.split_once('?').unwrap_or((&url, ""));
 
-        if file_path.exists() && file_path.is_file() {
-            let data = std::fs::read(&file_path).unwrap();
-            let ct = content_type(&file_path.to_string_lossy());
-            let header = Header::from_bytes("Content-Type", ct).unwrap();
-            let response = Response::from_data(data).with_header(header);
-            let _ = request.respond(response);
-        } else {
-            let response = Response::from_string("404 Not Found").with_status_code(404);
-            let _ = request.respond(response);
+        match path {
+            "/" => {
+                let html = include_str!("../viewer/index.html");
+                let header = Header::from_bytes("Content-Type", "text/html; charset=utf-8").unwrap();
+                let _ = request.respond(Response::from_string(html).with_header(header));
+            }
+
+            "/api/gallery" => {
+                // Return the shape gallery as JSON
+                let gallery = shape_gallery();
+                let json: String = format!("[{}]", gallery.iter().map(|m| {
+                    format!(r#"{{"name":"{}","label":"{}","category":"{}"}}"#, m.name, m.label, m.category)
+                }).collect::<Vec<_>>().join(","));
+                let header = Header::from_bytes("Content-Type", "application/json").unwrap();
+                let _ = request.respond(Response::from_string(json).with_header(header));
+            }
+
+            p if p.starts_with("/api/mesh/") => {
+                let name = &p["/api/mesh/".len()..];
+                let settings = parse_settings(query);
+                match build_shape(name) {
+                    Some(shape) => {
+                        let mesh = shape.mesh(&settings);
+                        let binary = mesh.to_binary();
+                        let header = Header::from_bytes("Content-Type", "application/octet-stream").unwrap();
+                        let _ = request.respond(Response::from_data(binary).with_header(header));
+                    }
+                    None => {
+                        let _ = request.respond(Response::from_string("Shape not found").with_status_code(404));
+                    }
+                }
+            }
+
+            p if p.starts_with("/api/info/") => {
+                let name = &p["/api/info/".len()..];
+                match build_shape(name) {
+                    Some(shape) => {
+                        let validation = shape.validate();
+                        let settings = parse_settings(query);
+                        let mesh = shape.mesh(&settings);
+
+                        // Topology counts
+                        let n_verts = shape.store.solid_vertices(shape.solid).len();
+                        let n_edges = shape.store.solid_edges(shape.solid).len();
+                        let n_faces = shape.store.solid_face_count(shape.solid);
+
+                        // Surface types used
+                        let shell = shape.store.shell(shape.store.solid(shape.solid).outer_shell);
+                        let mut surf_types: Vec<String> = Vec::new();
+                        for &face_id in &shell.faces {
+                            let face = shape.store.face(face_id);
+                            let t = match &face.surface {
+                                crusst::surface::Surface::Plane { .. } => "Plane",
+                                crusst::surface::Surface::Cylinder { .. } => "Cylinder",
+                                crusst::surface::Surface::Cone { .. } => "Cone",
+                                crusst::surface::Surface::Sphere { .. } => "Sphere",
+                                crusst::surface::Surface::Torus { .. } => "Torus",
+                                crusst::surface::Surface::NurbsSurface(_) => "NURBS",
+                            };
+                            if !surf_types.contains(&t.to_string()) {
+                                surf_types.push(t.to_string());
+                            }
+                        }
+
+                        let euler = n_verts as i64 - n_edges as i64 + n_faces as i64;
+
+                        let json = format!(
+                            r#"{{"valid":{},"errors":[{}],"vertices":{},"edges":{},"faces":{},"euler":{},"surfaces":[{}],"mesh_vertices":{},"mesh_triangles":{}}}"#,
+                            validation.valid,
+                            validation.errors.iter().map(|e| format!("\"{}\"", e.replace('"', "\\\""))).collect::<Vec<_>>().join(","),
+                            n_verts,
+                            n_edges,
+                            n_faces,
+                            euler,
+                            surf_types.iter().map(|s| format!("\"{}\"", s)).collect::<Vec<_>>().join(","),
+                            mesh.vertices.len(),
+                            mesh.indices.len() / 3,
+                        );
+                        let header = Header::from_bytes("Content-Type", "application/json").unwrap();
+                        let _ = request.respond(Response::from_string(json).with_header(header));
+                    }
+                    None => {
+                        let _ = request.respond(Response::from_string("Shape not found").with_status_code(404));
+                    }
+                }
+            }
+
+            p if p.starts_with("/api/export/") => {
+                let rest = &p["/api/export/".len()..];
+                let (format, name) = rest.split_once('/').unwrap_or(("", rest));
+                let settings = parse_settings(query);
+                match build_shape(name) {
+                    Some(shape) => {
+                        let mut buf = Vec::new();
+                        let (ct, filename) = match format {
+                            "stl" => {
+                                shape.write_stl(&settings, &mut buf).unwrap();
+                                ("application/octet-stream", format!("{name}.stl"))
+                            }
+                            "obj" => {
+                                shape.write_obj(&settings, &mut buf).unwrap();
+                                ("text/plain", format!("{name}.obj"))
+                            }
+                            "step" => {
+                                shape.write_step(&mut buf).unwrap();
+                                ("text/plain", format!("{name}.stp"))
+                            }
+                            "3mf" => {
+                                shape.write_3mf(&settings, &mut buf).unwrap();
+                                ("application/xml", format!("{name}.3mf"))
+                            }
+                            _ => {
+                                let _ = request.respond(Response::from_string("Unknown format").with_status_code(400));
+                                continue;
+                            }
+                        };
+                        let ct_header = Header::from_bytes("Content-Type", ct).unwrap();
+                        let disp_header = Header::from_bytes(
+                            "Content-Disposition",
+                            format!("attachment; filename=\"{}\"", filename)
+                        ).unwrap();
+                        let _ = request.respond(
+                            Response::from_data(buf)
+                                .with_header(ct_header)
+                                .with_header(disp_header)
+                        );
+                    }
+                    None => {
+                        let _ = request.respond(Response::from_string("Shape not found").with_status_code(404));
+                    }
+                }
+            }
+
+            _ => {
+                let _ = request.respond(Response::from_string("404").with_status_code(404));
+            }
         }
     }
 }

@@ -2,73 +2,156 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Crusst Geometry Kernel — Showcase Viewer</title>
+<title>Crusst v1.4 — B-Rep Kernel Test</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #0a0a0f; color: #e0e0e0; font-family: 'Segoe UI', system-ui, sans-serif; overflow-x: hidden; }
+  body { background: #08080d; color: #d0d0d0; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; overflow: hidden; }
 
   header {
-    padding: 20px 32px;
-    background: linear-gradient(135deg, #111118 0%, #1a1a2e 100%);
-    border-bottom: 1px solid #2a2a3e;
+    height: 52px; display: flex; align-items: center; padding: 0 24px;
+    background: linear-gradient(135deg, #0e0e16 0%, #151528 100%);
+    border-bottom: 1px solid #1e1e30;
   }
-  header h1 { font-size: 24px; font-weight: 600; letter-spacing: 1px; }
-  header h1 span { color: #ff6b35; }
-  header p { color: #888; font-size: 13px; margin-top: 4px; }
+  header h1 { font-size: 18px; font-weight: 600; }
+  header h1 .accent { color: #ff6b35; }
+  header h1 .version { color: #555; font-size: 13px; font-weight: 400; margin-left: 8px; }
+  header .spacer { flex: 1; }
+  header .badge {
+    font-size: 10px; padding: 3px 10px; border-radius: 10px;
+    background: #1a3a1a; color: #4caf50; border: 1px solid #2a5a2a;
+    letter-spacing: 0.5px; text-transform: uppercase; font-weight: 700;
+  }
 
-  .controls {
-    display: flex; gap: 8px; padding: 16px 32px; flex-wrap: wrap;
-    background: #111118; border-bottom: 1px solid #1e1e2e;
-  }
-  .controls button {
-    padding: 6px 14px; border: 1px solid #2a2a3e; border-radius: 6px;
-    background: #16161f; color: #ccc; cursor: pointer; font-size: 12px;
-    transition: all 0.15s;
-  }
-  .controls button:hover { background: #22223a; border-color: #ff6b35; color: #fff; }
-  .controls button.active { background: #ff6b35; border-color: #ff6b35; color: #fff; font-weight: 600; }
+  .main { display: flex; height: calc(100vh - 52px); }
 
-  .category-label {
-    padding: 6px 14px; font-size: 11px; color: #666; text-transform: uppercase;
-    letter-spacing: 1.5px; display: flex; align-items: center; font-weight: 700;
+  .sidebar {
+    width: 220px; min-width: 220px; background: #0c0c14;
+    border-right: 1px solid #1e1e30; overflow-y: auto;
+    display: flex; flex-direction: column;
   }
-  .sep { width: 1px; height: 24px; background: #2a2a3e; margin: 0 4px; }
+  .sidebar::-webkit-scrollbar { width: 4px; }
+  .sidebar::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
 
-  #viewer-container {
-    width: 100%; height: calc(100vh - 140px); position: relative;
+  .cat-label {
+    font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 1.5px;
+    padding: 14px 16px 6px; font-weight: 700;
   }
-  canvas { display: block; }
+  .cat-label:first-child { padding-top: 12px; }
 
-  #info-panel {
-    position: absolute; bottom: 20px; left: 20px; padding: 14px 20px;
-    background: rgba(10,10,15,0.85); border: 1px solid #2a2a3e;
-    border-radius: 10px; backdrop-filter: blur(8px); min-width: 260px;
+  .shape-btn {
+    display: block; width: calc(100% - 16px); margin: 2px 8px; padding: 7px 12px;
+    border: 1px solid transparent; border-radius: 6px; background: transparent;
+    color: #999; cursor: pointer; font-size: 12px; text-align: left;
+    transition: all 0.12s;
   }
-  #info-panel h3 { font-size: 15px; color: #ff6b35; margin-bottom: 6px; }
-  #info-panel .stat { font-size: 12px; color: #999; line-height: 1.7; }
-  #info-panel .stat b { color: #ccc; }
-  #info-panel .sealed { color: #4caf50; font-weight: 700; }
+  .shape-btn:hover { background: #16162a; color: #ddd; border-color: #2a2a40; }
+  .shape-btn.active { background: #1c1c3a; color: #ff6b35; border-color: #ff6b35; font-weight: 600; }
+
+  .viewport { flex: 1; position: relative; }
+  .viewport canvas { display: block; }
 
   #loading {
-    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
-    font-size: 14px; color: #666;
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    font-size: 13px; color: #444; display: none;
   }
+  #loading.show { display: block; }
+
+  .info-panel {
+    position: absolute; bottom: 16px; left: 16px;
+    background: rgba(8, 8, 13, 0.92); border: 1px solid #1e1e30;
+    border-radius: 10px; backdrop-filter: blur(10px); padding: 16px 20px;
+    min-width: 280px; font-size: 12px; line-height: 1.8;
+  }
+  .info-panel h3 { font-size: 15px; color: #ff6b35; margin-bottom: 8px; font-weight: 600; }
+  .info-panel .row { display: flex; justify-content: space-between; }
+  .info-panel .label { color: #666; }
+  .info-panel .value { color: #bbb; font-variant-numeric: tabular-nums; }
+  .info-panel .valid { color: #4caf50; font-weight: 700; }
+  .info-panel .invalid { color: #f44336; font-weight: 700; }
+  .info-panel .divider { border-top: 1px solid #1a1a2a; margin: 8px 0; }
+  .info-panel .surfaces { color: #888; font-size: 11px; margin-top: 4px; }
+  .info-panel .errors { color: #f44336; font-size: 11px; margin-top: 4px; max-width: 260px; }
+
+  .controls-panel {
+    position: absolute; top: 16px; right: 16px;
+    background: rgba(8, 8, 13, 0.92); border: 1px solid #1e1e30;
+    border-radius: 10px; backdrop-filter: blur(10px); padding: 16px 20px;
+    min-width: 200px; font-size: 12px;
+  }
+  .controls-panel h4 { color: #888; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+  .controls-panel .ctrl-row { margin-bottom: 10px; }
+  .controls-panel label { display: block; color: #666; font-size: 11px; margin-bottom: 3px; }
+  .controls-panel input[type="range"] {
+    width: 100%; height: 4px; -webkit-appearance: none; background: #222;
+    border-radius: 2px; outline: none;
+  }
+  .controls-panel input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+    background: #ff6b35; cursor: pointer;
+  }
+  .controls-panel .val { color: #888; font-size: 10px; text-align: right; }
+
+  .export-bar {
+    position: absolute; bottom: 16px; right: 16px;
+    display: flex; gap: 6px;
+  }
+  .export-btn {
+    padding: 6px 14px; border: 1px solid #2a2a3e; border-radius: 6px;
+    background: #12121e; color: #888; cursor: pointer; font-size: 11px;
+    transition: all 0.12s; text-decoration: none;
+  }
+  .export-btn:hover { background: #1e1e30; color: #fff; border-color: #ff6b35; }
+  .export-btn.step { border-color: #2a4a2a; color: #6a6; }
+  .export-btn.step:hover { border-color: #4caf50; color: #4caf50; }
+
+  .toggle-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid #1a1a2a; }
+  .toggle-row label { color: #666; font-size: 11px; margin: 0; }
+  .toggle-row input { accent-color: #ff6b35; }
 </style>
 </head>
 <body>
 
 <header>
-  <h1><span>Crusst</span> Geometry Kernel — Sealed Solids Viewer</h1>
-  <p>OBJ indexed meshes with shared vertices — watertight topology preserved</p>
+  <h1><span class="accent">Crusst</span> B-Rep Kernel<span class="version">v1.4</span></h1>
+  <div class="spacer"></div>
+  <div class="badge" id="test-badge">Loading...</div>
 </header>
 
-<div class="controls" id="controls"></div>
+<div class="main">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="viewport" id="viewport">
+    <div id="loading" class="show">Initializing...</div>
 
-<div id="viewer-container">
-  <div id="loading">Loading...</div>
-  <div id="info-panel">
-    <h3 id="model-name">Select a model</h3>
-    <div class="stat" id="model-stats"></div>
+    <div class="info-panel" id="info-panel">
+      <h3 id="shape-name">Select a shape</h3>
+      <div id="info-content"></div>
+    </div>
+
+    <div class="controls-panel" id="controls-panel">
+      <h4>Tessellation</h4>
+      <div class="ctrl-row">
+        <label>Chord tolerance <span class="val" id="chord-val">0.02</span></label>
+        <input type="range" id="chord-slider" min="0.001" max="0.2" step="0.001" value="0.02">
+      </div>
+      <div class="ctrl-row">
+        <label>Min subdivisions <span class="val" id="sub-val">8</span></label>
+        <input type="range" id="sub-slider" min="2" max="32" step="1" value="8">
+      </div>
+      <div class="ctrl-row">
+        <label>Max edge length <span class="val" id="edge-val">5.0</span></label>
+        <input type="range" id="edge-slider" min="0.5" max="20" step="0.5" value="5.0">
+      </div>
+      <div class="toggle-row">
+        <input type="checkbox" id="wireframe-toggle">
+        <label for="wireframe-toggle">Wireframe overlay</label>
+      </div>
+      <div class="toggle-row">
+        <input type="checkbox" id="normals-toggle">
+        <label for="normals-toggle">Show normals</label>
+      </div>
+    </div>
+
+    <div class="export-bar" id="export-bar"></div>
   </div>
 </div>
 
@@ -83,231 +166,274 @@
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 
-const models = [
-  { file: '01_sphere.obj',             label: 'Sphere',             cat: 'Primitives' },
-  { file: '02_box.obj',                label: 'Box',                cat: 'Primitives' },
-  { file: '03_cylinder.obj',           label: 'Cylinder',           cat: 'Primitives' },
-  { file: '04_capped_cone.obj',        label: 'Capped Cone',        cat: 'Primitives' },
-  { file: '05_torus.obj',              label: 'Torus',              cat: 'Primitives' },
-  { file: '06_rounded_box.obj',        label: 'Rounded Box',        cat: 'Primitives' },
-  { file: '07_capsule.obj',            label: 'Capsule',            cat: 'Primitives' },
-  { file: '08_ellipsoid.obj',          label: 'Ellipsoid',          cat: 'Primitives' },
-  { file: '09_rounded_cylinder.obj',   label: 'Rounded Cylinder',   cat: 'Primitives' },
-  { file: '10_boolean_union.obj',      label: 'Union',              cat: 'Booleans' },
-  { file: '11_boolean_intersection.obj',label: 'Intersection',      cat: 'Booleans' },
-  { file: '12_boolean_difference.obj', label: 'Difference',         cat: 'Booleans' },
-  { file: '13_smooth_union.obj',       label: 'Smooth Union',       cat: 'Smooth' },
-  { file: '14_smooth_intersection.obj',label: 'Smooth Intersect',   cat: 'Smooth' },
-  { file: '15_smooth_difference.obj',  label: 'Smooth Difference',  cat: 'Smooth' },
-  { file: '16_translate.obj',          label: 'Translate',          cat: 'Transforms' },
-  { file: '17_rotate.obj',             label: 'Rotate',             cat: 'Transforms' },
-  { file: '18_scale.obj',              label: 'Scale',              cat: 'Transforms' },
-  { file: '19_mirror.obj',             label: 'Mirror',             cat: 'Transforms' },
-  { file: '20_shell.obj',              label: 'Shell (Onion)',      cat: 'Transforms' },
-  { file: '20b_revolve.obj',           label: 'Revolve',            cat: 'Transforms' },
-  { file: '20c_extrude.obj',           label: 'Extrude',            cat: 'Transforms' },
-  { file: '21_mounting_bracket.obj',   label: 'Mounting Bracket',   cat: 'Composed' },
-  { file: '22_pipe_tee.obj',           label: 'Pipe Tee',           cat: 'Composed' },
-  { file: '23_gasket_ring.obj',        label: 'Gasket Ring',        cat: 'Composed' },
-  { file: '24_rounded_enclosure.obj',  label: 'Enclosure',          cat: 'Composed' },
-  { file: '25_organic_blob.obj',       label: 'Organic Blob',       cat: 'Composed' },
-  { file: '26_rotated_star.obj',       label: 'Rotated Star',       cat: 'Composed' },
-  { file: '27_bearing_housing.obj',    label: 'Bearing Housing',    cat: 'Composed' },
-  { file: '17b_rotated_union.obj',     label: 'Rotated Union (DAG)', cat: 'Transforms' },
-  { file: '30_filleted_box.obj',       label: 'G2 Fillet',          cat: 'Fillets' },
-  { file: '31_chamfered_box.obj',      label: 'Chamfer (G0)',       cat: 'Fillets' },
-  { file: '36_g1_fillet_box.obj',      label: 'G1 Fillet',          cat: 'Fillets' },
-  { file: '37_g3_fillet_box.obj',      label: 'G3 Fillet',          cat: 'Fillets' },
-  { file: '38_parabolic_fillet_box.obj',label: 'Parabolic',         cat: 'Fillets' },
-  { file: '39_hyperbolic_fillet_box.obj',label: 'Hyperbolic',       cat: 'Fillets' },
-  { file: '40_cycloidal_fillet_box.obj',label: 'Cycloidal',         cat: 'Fillets' },
-  { file: '32_round_union.obj',        label: 'Round Union',        cat: 'Round CSG' },
-  { file: '33_round_subtract.obj',     label: 'Round Subtract',     cat: 'Round CSG' },
-  { file: '34_selective_fillet.obj',    label: 'Selective Fillet',   cat: 'Round CSG' },
-  { file: '35_rounded_box_simple.obj', label: 'Rounded Box',        cat: 'Round CSG' },
-];
+let currentShape = null;
+let currentMeshGroup = null;
+let wireframeOverlay = null;
+let normalHelpers = null;
+let gallery = [];
 
-// Build controls
-const controlsEl = document.getElementById('controls');
-let lastCat = '';
-models.forEach((m, i) => {
-  if (m.cat !== lastCat) {
-    if (lastCat) { const sep = document.createElement('div'); sep.className = 'sep'; controlsEl.appendChild(sep); }
-    const lbl = document.createElement('div');
-    lbl.className = 'category-label';
-    lbl.textContent = m.cat;
-    controlsEl.appendChild(lbl);
-    lastCat = m.cat;
-  }
-  const btn = document.createElement('button');
-  btn.textContent = m.label;
-  btn.dataset.index = String(i);
-  btn.addEventListener('click', () => loadModel(i));
-  controlsEl.appendChild(btn);
-});
-
-// Three.js setup
-const container = document.getElementById('viewer-container');
+const container = document.getElementById('viewport');
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0a0f);
+scene.background = new THREE.Color(0x08080d);
 
-const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.01, 2000);
 camera.position.set(30, 25, 30);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
 renderer.setSize(container.clientWidth, container.clientHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
-renderer.shadowMap.enabled = false;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.2;
+renderer.toneMappingExposure = 1.1;
 container.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.autoRotate = true;
-controls.autoRotateSpeed = 1.5;
+controls.autoRotateSpeed = 1.2;
 
-// Lighting
-scene.add(new THREE.AmbientLight(0x404060, 0.6));
-
-const keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
-keyLight.position.set(20, 30, 15);
+scene.add(new THREE.AmbientLight(0x303050, 0.5));
+const keyLight = new THREE.DirectionalLight(0xffffff, 2.0);
+keyLight.position.set(25, 35, 20);
 scene.add(keyLight);
-
-const fillLight = new THREE.DirectionalLight(0x4488cc, 0.6);
-fillLight.position.set(-15, 10, -10);
+const fillLight = new THREE.DirectionalLight(0x4488cc, 0.5);
+fillLight.position.set(-20, 10, -15);
 scene.add(fillLight);
-
-const rimLight = new THREE.DirectionalLight(0xff6b35, 0.4);
-rimLight.position.set(0, -10, -20);
+const rimLight = new THREE.DirectionalLight(0xff6b35, 0.3);
+rimLight.position.set(0, -15, -25);
 scene.add(rimLight);
 
-// Grid
-const gridHelper = new THREE.GridHelper(60, 30, 0x1a1a2e, 0x111118);
-gridHelper.position.y = -0.01;
-scene.add(gridHelper);
+const grid = new THREE.GridHelper(80, 40, 0x181830, 0x0e0e1a);
+grid.position.y = -0.01;
+scene.add(grid);
 
-// Materials
-const solidMaterial = new THREE.MeshPhysicalMaterial({
-  color: 0xcc5522,
-  metalness: 0.3,
-  roughness: 0.4,
-  clearcoat: 0.3,
-  clearcoatRoughness: 0.2,
-  side: THREE.FrontSide,  // FrontSide only — proves watertight (no back-face holes)
+const solidMat = new THREE.MeshPhysicalMaterial({
+  color: 0xcc5522, metalness: 0.25, roughness: 0.35,
+  clearcoat: 0.4, clearcoatRoughness: 0.15, side: THREE.FrontSide,
 });
-
-const wireOverlay = new THREE.MeshBasicMaterial({
-  color: 0xff6b35,
-  wireframe: true,
-  transparent: true,
-  opacity: 0.06,
+const wireMat = new THREE.MeshBasicMaterial({
+  color: 0xff6b35, wireframe: true, transparent: true, opacity: 0.08,
 });
+const normalLineMat = new THREE.LineBasicMaterial({ color: 0x44aaff });
 
-let currentGroup = null;
-const loader = new OBJLoader();
-const loadingEl = document.getElementById('loading');
+function parseBinaryMesh(buffer) {
+  const view = new DataView(buffer);
+  let offset = 0;
+  const nv = view.getUint32(offset, true); offset += 4;
+  const positions = new Float32Array(nv * 3);
+  for (let i = 0; i < nv * 3; i++) { positions[i] = view.getFloat32(offset, true); offset += 4; }
+  const normals = new Float32Array(nv * 3);
+  for (let i = 0; i < nv * 3; i++) { normals[i] = view.getFloat32(offset, true); offset += 4; }
+  const ni = view.getUint32(offset, true); offset += 4;
+  const indices = new Uint32Array(ni);
+  for (let i = 0; i < ni; i++) { indices[i] = view.getUint32(offset, true); offset += 4; }
+  return { positions, normals, indices, vertexCount: nv, triangleCount: ni / 3 };
+}
 
-function clearCurrent() {
-  if (currentGroup) {
-    scene.remove(currentGroup);
-    currentGroup.traverse((child) => {
-      if (child.geometry) child.geometry.dispose();
-    });
-    currentGroup = null;
+function clearModel() {
+  if (currentMeshGroup) {
+    scene.remove(currentMeshGroup);
+    currentMeshGroup.traverse(c => { if (c.geometry) c.geometry.dispose(); });
+    currentMeshGroup = null;
   }
+  if (normalHelpers) { scene.remove(normalHelpers); normalHelpers = null; }
 }
 
-function updateInfoPanel(label, cat, triCount, vertCount, indexedVerts, sizeVec, fileName) {
-  document.getElementById('model-name').textContent = label;
-  const statsEl = document.getElementById('model-stats');
-  while (statsEl.firstChild) statsEl.removeChild(statsEl.firstChild);
+function buildNormalHelpers(meshData, scale) {
+  const group = new THREE.Group();
+  const step = Math.max(1, Math.floor(meshData.vertexCount / 500));
+  const pts = [];
+  for (let i = 0; i < meshData.vertexCount; i += step) {
+    const px = meshData.positions[i*3], py = meshData.positions[i*3+1], pz = meshData.positions[i*3+2];
+    const nx = meshData.normals[i*3], ny = meshData.normals[i*3+1], nz = meshData.normals[i*3+2];
+    pts.push(px, py, pz, px + nx*scale, py + ny*scale, pz + nz*scale);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  group.add(new THREE.LineSegments(geo, normalLineMat));
+  return group;
+}
 
-  const lines = [
-    ['Category', cat],
-    ['Triangles', triCount.toLocaleString()],
-    ['Draw vertices', vertCount.toLocaleString()],
-    ['Indexed vertices', indexedVerts.toLocaleString()],
-    ['Bounding', sizeVec.x.toFixed(1) + ' x ' + sizeVec.y.toFixed(1) + ' x ' + sizeVec.z.toFixed(1)],
-    ['Format', 'OBJ (indexed, shared vertices)'],
-    ['Topology', 'SEALED SOLID'],
-  ];
+function makeInfoRow(labelText, valueText, valueClass) {
+  const row = document.createElement('div');
+  row.className = 'row';
+  const lbl = document.createElement('span');
+  lbl.className = 'label';
+  lbl.textContent = labelText;
+  const val = document.createElement('span');
+  val.className = valueClass || 'value';
+  val.textContent = valueText;
+  row.appendChild(lbl);
+  row.appendChild(val);
+  return row;
+}
 
-  lines.forEach(([key, val], idx) => {
-    const b = document.createElement('b');
-    b.textContent = key + ': ';
-    statsEl.appendChild(b);
-    const span = document.createElement('span');
-    span.textContent = val;
-    if (key === 'Topology') span.className = 'sealed';
-    statsEl.appendChild(span);
-    if (idx < lines.length - 1) statsEl.appendChild(document.createElement('br'));
+function makeDivider() {
+  const d = document.createElement('div');
+  d.className = 'divider';
+  return d;
+}
+
+async function loadShape(name) {
+  currentShape = name;
+  const loadingEl = document.getElementById('loading');
+  loadingEl.classList.add('show');
+
+  const chord = document.getElementById('chord-slider').value;
+  const sub = document.getElementById('sub-slider').value;
+  const edge = document.getElementById('edge-slider').value;
+  const qs = 'chord=' + chord + '&minsub=' + sub + '&maxedge=' + edge;
+
+  const [meshRes, infoRes] = await Promise.all([
+    fetch('/api/mesh/' + name + '?' + qs),
+    fetch('/api/info/' + name + '?' + qs),
+  ]);
+
+  if (!meshRes.ok) { loadingEl.textContent = 'Shape not found'; return; }
+
+  const meshBuf = await meshRes.arrayBuffer();
+  const info = await infoRes.json();
+  const meshData = parseBinaryMesh(meshBuf);
+
+  clearModel();
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(meshData.positions, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(meshData.normals, 3));
+  geo.setIndex(new THREE.BufferAttribute(meshData.indices, 1));
+
+  const group = new THREE.Group();
+  group.add(new THREE.Mesh(geo, solidMat));
+
+  wireframeOverlay = new THREE.Mesh(geo.clone(), wireMat);
+  wireframeOverlay.visible = document.getElementById('wireframe-toggle').checked;
+  group.add(wireframeOverlay);
+
+  const bbox = new THREE.Box3().setFromBufferAttribute(geo.attributes.position);
+  const center = new THREE.Vector3();
+  bbox.getCenter(center);
+  group.position.sub(center);
+
+  const size = new THREE.Vector3();
+  bbox.getSize(size);
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const dist = maxDim * 1.8;
+  camera.position.set(dist * 0.7, dist * 0.5, dist * 0.7);
+  controls.target.set(0, 0, 0);
+  controls.update();
+  grid.position.y = bbox.min.y - center.y - 0.5;
+
+  scene.add(group);
+  currentMeshGroup = group;
+
+  const normalScale = maxDim * 0.04;
+  normalHelpers = buildNormalHelpers(meshData, normalScale);
+  normalHelpers.position.copy(group.position);
+  normalHelpers.visible = document.getElementById('normals-toggle').checked;
+  scene.add(normalHelpers);
+
+  // Update info panel using safe DOM methods
+  const displayName = name.replace(/_/g, ' ');
+  document.getElementById('shape-name').textContent = displayName.charAt(0).toUpperCase() + displayName.slice(1);
+
+  const content = document.getElementById('info-content');
+  while (content.firstChild) content.removeChild(content.firstChild);
+
+  content.appendChild(makeInfoRow('B-Rep Vertices', String(info.vertices)));
+  content.appendChild(makeInfoRow('B-Rep Edges', String(info.edges)));
+  content.appendChild(makeInfoRow('B-Rep Faces', String(info.faces)));
+  content.appendChild(makeInfoRow('Euler (V-E+F)', String(info.euler)));
+  content.appendChild(makeDivider());
+  content.appendChild(makeInfoRow('Mesh Vertices', meshData.vertexCount.toLocaleString()));
+  content.appendChild(makeInfoRow('Mesh Triangles', meshData.triangleCount.toLocaleString()));
+  content.appendChild(makeInfoRow('Bounding Box', size.x.toFixed(1) + ' x ' + size.y.toFixed(1) + ' x ' + size.z.toFixed(1)));
+  content.appendChild(makeDivider());
+  content.appendChild(makeInfoRow('Topology', info.valid ? 'VALID SOLID' : 'INVALID', info.valid ? 'valid' : 'invalid'));
+
+  const surfDiv = document.createElement('div');
+  surfDiv.className = 'surfaces';
+  surfDiv.textContent = 'Surfaces: ' + info.surfaces.join(', ');
+  content.appendChild(surfDiv);
+
+  if (info.errors && info.errors.length > 0) {
+    const errDiv = document.createElement('div');
+    errDiv.className = 'errors';
+    errDiv.textContent = info.errors.join('; ');
+    content.appendChild(errDiv);
+  }
+
+  // Update export buttons
+  const bar = document.getElementById('export-bar');
+  while (bar.firstChild) bar.removeChild(bar.firstChild);
+  [
+    { fmt: 'step', label: 'STEP', cls: 'step', tip: 'Exact B-Rep geometry' },
+    { fmt: 'stl',  label: 'STL',  cls: '',     tip: 'Binary triangle mesh' },
+    { fmt: 'obj',  label: 'OBJ',  cls: '',     tip: 'Wavefront with normals' },
+    { fmt: '3mf',  label: '3MF',  cls: '',     tip: '3D Manufacturing Format' },
+  ].forEach(function(e) {
+    const a = document.createElement('a');
+    a.className = 'export-btn ' + e.cls;
+    a.textContent = e.label;
+    a.title = e.tip;
+    a.href = '/api/export/' + e.fmt + '/' + name + '?' + qs;
+    a.download = '';
+    bar.appendChild(a);
   });
-}
 
-function loadModel(index) {
-  const m = models[index];
-
-  controlsEl.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-  const activeBtn = controlsEl.querySelector('button[data-index="' + index + '"]');
+  // Highlight sidebar button
+  document.querySelectorAll('.shape-btn').forEach(function(b) { b.classList.remove('active'); });
+  const activeBtn = document.querySelector('.shape-btn[data-name="' + name + '"]');
   if (activeBtn) activeBtn.classList.add('active');
 
-  loadingEl.style.display = 'block';
-  clearCurrent();
+  loadingEl.classList.remove('show');
+}
 
-  loader.load(m.file, (obj) => {
-    // OBJ loader returns a Group; find the mesh inside
-    const group = new THREE.Group();
-    let totalTris = 0;
-    let totalVerts = 0;
-    let indexedVerts = 0;
+async function buildSidebar() {
+  const res = await fetch('/api/gallery');
+  gallery = await res.json();
+  const sidebar = document.getElementById('sidebar');
+  let lastCat = '';
+  gallery.forEach(function(m) {
+    if (m.category !== lastCat) {
+      const label = document.createElement('div');
+      label.className = 'cat-label';
+      label.textContent = m.category;
+      sidebar.appendChild(label);
+      lastCat = m.category;
+    }
+    const btn = document.createElement('button');
+    btn.className = 'shape-btn';
+    btn.textContent = m.label;
+    btn.dataset.name = m.name;
+    btn.addEventListener('click', function() { loadShape(m.name); });
+    sidebar.appendChild(btn);
+  });
+  document.getElementById('test-badge').textContent = gallery.length + ' shapes';
+}
 
-    obj.traverse((child) => {
-      if (child.isMesh) {
-        const geo = child.geometry;
-        geo.computeVertexNormals();
-
-        const solidMesh = new THREE.Mesh(geo, solidMaterial);
-        group.add(solidMesh);
-
-        const wireMesh = new THREE.Mesh(geo.clone(), wireOverlay);
-        group.add(wireMesh);
-
-        if (geo.index) {
-          totalTris += geo.index.count / 3;
-          indexedVerts = geo.attributes.position.count;
-        } else {
-          totalTris += geo.attributes.position.count / 3;
-          indexedVerts = geo.attributes.position.count;
-        }
-        totalVerts = geo.attributes.position.count;
-      }
-    });
-
-    // Center
-    const bbox = new THREE.Box3().setFromObject(group);
-    const center = new THREE.Vector3();
-    bbox.getCenter(center);
-    group.position.sub(center);
-
-    const size = new THREE.Vector3();
-    bbox.getSize(size);
-    const maxDim = Math.max(size.x, size.y, size.z);
-    const dist = maxDim * 1.8;
-    camera.position.set(dist * 0.7, dist * 0.5, dist * 0.7);
-    controls.target.set(0, 0, 0);
-    controls.update();
-
-    gridHelper.position.y = bbox.min.y - center.y - 0.5;
-
-    scene.add(group);
-    currentGroup = group;
-
-    updateInfoPanel(m.label, m.cat, totalTris, totalVerts, indexedVerts, size, m.file);
-    loadingEl.style.display = 'none';
+function setupControls() {
+  const chordSlider = document.getElementById('chord-slider');
+  const subSlider = document.getElementById('sub-slider');
+  const edgeSlider = document.getElementById('edge-slider');
+  let debounceTimer;
+  function onSettingsChange() {
+    document.getElementById('chord-val').textContent = parseFloat(chordSlider.value).toFixed(3);
+    document.getElementById('sub-val').textContent = subSlider.value;
+    document.getElementById('edge-val').textContent = parseFloat(edgeSlider.value).toFixed(1);
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(function() {
+      if (currentShape) loadShape(currentShape);
+    }, 300);
+  }
+  chordSlider.addEventListener('input', onSettingsChange);
+  subSlider.addEventListener('input', onSettingsChange);
+  edgeSlider.addEventListener('input', onSettingsChange);
+  document.getElementById('wireframe-toggle').addEventListener('change', function(e) {
+    if (wireframeOverlay) wireframeOverlay.visible = e.target.checked;
+  });
+  document.getElementById('normals-toggle').addEventListener('change', function(e) {
+    if (normalHelpers) normalHelpers.visible = e.target.checked;
   });
 }
 
@@ -316,15 +442,20 @@ function animate() {
   controls.update();
   renderer.render(scene, camera);
 }
-animate();
 
-window.addEventListener('resize', () => {
+window.addEventListener('resize', function() {
   camera.aspect = container.clientWidth / container.clientHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(container.clientWidth, container.clientHeight);
 });
 
-loadModel(0);
+async function init() {
+  await buildSidebar();
+  setupControls();
+  animate();
+  if (gallery.length > 0) loadShape(gallery[0].name);
+}
+init();
 </script>
 </body>
 </html>
