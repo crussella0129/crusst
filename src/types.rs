@@ -119,6 +119,10 @@ pub struct TessSettings {
     pub max_edge_length: f64,
     /// Minimum number of subdivisions per face in each parametric direction.
     pub min_subdivisions: u32,
+    /// Maximum angular step (radians) per arc segment. Provides a curvature-
+    /// based resolution floor independent of chord tolerance — ensures arcs
+    /// are visually smooth regardless of size.
+    pub max_angular_step: f64,
 }
 
 impl Default for TessSettings {
@@ -127,6 +131,7 @@ impl Default for TessSettings {
             chord_tolerance: 0.01,
             max_edge_length: 5.0,
             min_subdivisions: 4,
+            max_angular_step: std::f64::consts::PI / 36.0, // 5° per step
         }
     }
 }
@@ -168,10 +173,25 @@ impl TessSettings {
         // adaptive refinement), 4 for all-planar shapes.
         let min_sub = if min_curvature_r.is_finite() { 32 } else { 4 };
 
+        // Angular step: tighter for high-curvature features. Scale from
+        // 5° baseline down to 3° as curvature radius shrinks relative to
+        // bounding diagonal. This ensures small curved features get denser
+        // arc sampling while large gentle curves stay efficient.
+        let angular_step = if min_curvature_r.is_finite() {
+            let curvature_ratio = (min_curvature_r / diag).clamp(0.01, 1.0);
+            // 3° for tight curves (ratio→0), 5° for gentle curves (ratio→1)
+            let deg_min = 3.0_f64.to_radians();
+            let deg_max = 5.0_f64.to_radians();
+            deg_min + (deg_max - deg_min) * curvature_ratio
+        } else {
+            5.0_f64.to_radians()
+        };
+
         Self {
             chord_tolerance: chord_tol,
             max_edge_length: max_edge,
             min_subdivisions: min_sub,
+            max_angular_step: angular_step,
         }
     }
 }

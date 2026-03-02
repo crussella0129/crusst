@@ -100,6 +100,7 @@ fn parse_settings(query: &str) -> TessSettings {
         chord_tolerance: 0.02,
         max_edge_length: 5.0,
         min_subdivisions: 8,
+        ..Default::default()
     };
     for pair in query.split('&') {
         let mut kv = pair.splitn(2, '=');

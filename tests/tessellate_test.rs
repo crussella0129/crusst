@@ -10,6 +10,7 @@ fn default_settings() -> TessSettings {
         chord_tolerance: 0.05,
         max_edge_length: 5.0,
         min_subdivisions: 8,
+        ..Default::default()
     }
 }
 

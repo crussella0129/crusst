@@ -139,19 +139,19 @@ fn is_convex(polygon: &[(f64, f64)]) -> bool {
 
 /// Structured ring tessellation for convex planar faces.
 ///
-/// Creates 3 concentric rings at 25%, 50%, 75% from centroid to boundary:
-/// - 3 quad strips between adjacent rings (each 2N triangles)
+/// Creates 2 concentric rings at 33% and 67% from centroid to boundary:
+/// - 2 quad strips between adjacent layers (each 2N triangles)
 /// - 1 inner fan from innermost ring to centroid (N triangles)
-/// Total: 7N triangles with uniform aspect ratios.
+/// Total: 5N triangles with uniform aspect ratios.
 fn tessellate_convex_with_rings(
     boundary_3d: &[Point3],
     normal: NVec3<f64>,
     keep_order: bool,
 ) -> (Vec<NVec3<f64>>, Vec<NVec3<f64>>, Vec<u32>) {
     let n = boundary_3d.len();
-    let num_rings: usize = 3;
+    let num_rings: usize = 2;
     // Ring radii as fraction from centroid to boundary (outermost first)
-    let ring_fractions: [f64; 3] = [0.75, 0.50, 0.25];
+    let ring_fractions: [f64; 2] = [0.67, 0.33];
 
     // Compute centroid
     let mut cx = 0.0;
@@ -316,7 +316,7 @@ fn discretize_wire_boundary_3d(
         match &edge.curve {
             Curve3::Circle { center, axis, radius } => {
                 // Adaptively subdivide arc
-                let n_segs = arc_subdivision_count(*radius, settings.chord_tolerance)
+                let n_segs = arc_subdivision_count(*radius, settings)
                     .max(settings.min_subdivisions as usize / 2)
                     .max(4);
 
@@ -375,14 +375,37 @@ fn sample_arc_3d(
     pts
 }
 
-/// Compute arc subdivision count from chord tolerance.
-fn arc_subdivision_count(radius: f64, tolerance: f64) -> usize {
+/// Compute arc subdivision count from chord tolerance and angular resolution.
+///
+/// Takes the MAX of two strategies:
+/// - **Chord-based**: ensures geometric deviation stays within tolerance
+/// - **Angular-based**: ensures visual smoothness based on max_angular_step
+///
+/// This means small arcs on large models stay cheap (chord-based dominates),
+/// while large circular silhouettes stay smooth (angular-based dominates).
+fn arc_subdivision_count(radius: f64, settings: &TessSettings) -> usize {
+    let tolerance = settings.chord_tolerance;
     if radius < 1e-15 || tolerance <= 0.0 { return 8; }
+
+    // Chord-based: maximum angle that keeps sagitta within tolerance
     let ratio = (tolerance / radius).min(1.0);
-    let max_angle = 2.0 * (1.0 - ratio).acos();
-    if max_angle < 1e-10 { return 64; }
-    let total_angle = std::f64::consts::PI; // half-circle
-    ((total_angle / max_angle).ceil() as usize).max(4)
+    let max_angle_chord = 2.0 * (1.0 - ratio).acos();
+    let chord_based = if max_angle_chord < 1e-10 {
+        64
+    } else {
+        let total_angle = std::f64::consts::PI; // half-circle
+        (total_angle / max_angle_chord).ceil() as usize
+    };
+
+    // Angular-based: maximum segments per radian of curvature
+    let angular_based = if settings.max_angular_step > 1e-10 {
+        let total_angle = std::f64::consts::PI;
+        (total_angle / settings.max_angular_step).ceil() as usize
+    } else {
+        4
+    };
+
+    chord_based.max(angular_based).max(4)
 }
 
 // ─── UV sampling for curved face domains ────────────────────────────────────
