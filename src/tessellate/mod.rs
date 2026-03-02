@@ -139,16 +139,19 @@ fn is_convex(polygon: &[(f64, f64)]) -> bool {
 
 /// Structured ring tessellation for convex planar faces.
 ///
-/// Creates one concentric ring at 50% from centroid to boundary, then:
-/// - Outer strip: boundary[i] → ring[i] quads split into 2N triangles
-/// - Inner fan: ring[i] → centroid, N triangles
-/// Total: 3N triangles with uniform aspect ratios.
+/// Creates 3 concentric rings at 25%, 50%, 75% from centroid to boundary:
+/// - 3 quad strips between adjacent rings (each 2N triangles)
+/// - 1 inner fan from innermost ring to centroid (N triangles)
+/// Total: 7N triangles with uniform aspect ratios.
 fn tessellate_convex_with_rings(
     boundary_3d: &[Point3],
     normal: NVec3<f64>,
     keep_order: bool,
 ) -> (Vec<NVec3<f64>>, Vec<NVec3<f64>>, Vec<u32>) {
     let n = boundary_3d.len();
+    let num_rings: usize = 3;
+    // Ring radii as fraction from centroid to boundary (outermost first)
+    let ring_fractions: [f64; 3] = [0.75, 0.50, 0.25];
 
     // Compute centroid
     let mut cx = 0.0;
@@ -162,8 +165,8 @@ fn tessellate_convex_with_rings(
     let inv_n = 1.0 / n as f64;
     let centroid = NVec3::new(cx * inv_n, cy * inv_n, cz * inv_n);
 
-    // Build vertices: [boundary (0..n), ring (n..2n), centroid (2n)]
-    let total_verts = 2 * n + 1;
+    // Vertex layout: [boundary(0..n), ring0(n..2n), ring1(2n..3n), ring2(3n..4n), centroid(4n)]
+    let total_verts = (num_rings + 1) * n + 1;
     let mut verts = Vec::with_capacity(total_verts);
     let mut norms = Vec::with_capacity(total_verts);
 
@@ -173,40 +176,61 @@ fn tessellate_convex_with_rings(
         norms.push(normal);
     }
 
-    // Ring vertices at 50% from centroid to boundary (indices n..2n)
-    for pt in boundary_3d {
-        let bv = NVec3::new(pt.x, pt.y, pt.z);
-        let ring_pt = centroid + (bv - centroid) * 0.5;
-        verts.push(ring_pt);
-        norms.push(normal);
+    // Ring vertices (indices [r*n..(r+1)*n] for each ring r, offset by n)
+    for &frac in &ring_fractions {
+        for pt in boundary_3d {
+            let bv = NVec3::new(pt.x, pt.y, pt.z);
+            let ring_pt = centroid + (bv - centroid) * frac;
+            verts.push(ring_pt);
+            norms.push(normal);
+        }
     }
 
-    // Centroid vertex (index 2n)
+    // Centroid vertex
     verts.push(centroid);
     norms.push(normal);
+    let centroid_idx = ((num_rings + 1) * n) as u32;
 
-    let centroid_idx = (2 * n) as u32;
+    // Build triangles: (2 * num_rings + 1) * N = 7N total
+    let mut indices = Vec::with_capacity((2 * num_rings + 1) * n * 3);
 
-    // Build triangles: 3N total
-    let mut indices = Vec::with_capacity(3 * n * 3);
+    // Quad strips between adjacent layers
+    // Layers: boundary (offset 0), ring0 (offset n), ring1 (offset 2n), ring2 (offset 3n)
+    let layer_offsets: Vec<usize> = std::iter::once(0)
+        .chain((0..num_rings).map(|r| (r + 1) * n))
+        .collect();
 
+    for layer in 0..num_rings {
+        let outer_off = layer_offsets[layer];
+        let inner_off = layer_offsets[layer + 1];
+
+        for i in 0..n {
+            let i_next = (i + 1) % n;
+            let o0 = (outer_off + i) as u32;
+            let o1 = (outer_off + i_next) as u32;
+            let in0 = (inner_off + i) as u32;
+            let in1 = (inner_off + i_next) as u32;
+
+            if keep_order {
+                indices.extend_from_slice(&[o0, o1, in1]);
+                indices.extend_from_slice(&[o0, in1, in0]);
+            } else {
+                indices.extend_from_slice(&[o0, in1, o1]);
+                indices.extend_from_slice(&[o0, in0, in1]);
+            }
+        }
+    }
+
+    // Inner fan: innermost ring → centroid
+    let inner_off = layer_offsets[num_rings];
     for i in 0..n {
         let i_next = (i + 1) % n;
-        let b0 = i as u32;              // boundary[i]
-        let b1 = i_next as u32;         // boundary[i+1]
-        let r0 = (n + i) as u32;        // ring[i]
-        let r1 = (n + i_next) as u32;   // ring[i+1]
+        let r0 = (inner_off + i) as u32;
+        let r1 = (inner_off + i_next) as u32;
 
         if keep_order {
-            // Outer strip: two triangles per quad (boundary → ring)
-            indices.extend_from_slice(&[b0, b1, r1]);
-            indices.extend_from_slice(&[b0, r1, r0]);
-            // Inner fan: ring → centroid
             indices.extend_from_slice(&[r0, r1, centroid_idx]);
         } else {
-            // Reversed winding
-            indices.extend_from_slice(&[b0, r1, b1]);
-            indices.extend_from_slice(&[b0, r0, r1]);
             indices.extend_from_slice(&[r0, centroid_idx, r1]);
         }
     }
