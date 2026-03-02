@@ -67,9 +67,11 @@ pub fn tessellate_face(
     (pts, norms, tris)
 }
 
-// ─── Planar face tessellation (ear clipping) ────────────────────────────────
+// ─── Planar face tessellation (ear clipping + ring tessellation) ─────────────
 
-/// Tessellate a planar face by discretizing its wire boundary and ear-clipping.
+/// Tessellate a planar face by discretizing its wire boundary.
+/// Convex faces with ≥8 boundary points use structured ring tessellation for
+/// uniform triangle quality; others fall back to ear-clipping.
 fn tessellate_planar_face(
     store: &TopoStore,
     face_id: FaceId,
@@ -92,7 +94,16 @@ fn tessellate_planar_face(
     let mut normal = surface.normal(boundary_uv[0].0, boundary_uv[0].1);
     if !outward { normal = -normal; }
 
-    // Map to 3D vertex positions (use evaluated points for consistency)
+    let area = signed_area(&boundary_uv);
+    let ccw = area > 0.0;
+    let keep_order = (outward && ccw) || (!outward && !ccw);
+
+    // Use ring tessellation for convex faces with enough boundary points
+    if boundary_3d.len() >= 8 && is_convex(&boundary_uv) {
+        return tessellate_convex_with_rings(&boundary_3d, normal, keep_order);
+    }
+
+    // Fallback: ear clipping for small or non-convex faces
     let mut verts: Vec<NVec3<f64>> = Vec::with_capacity(boundary_3d.len());
     let mut normals: Vec<NVec3<f64>> = Vec::with_capacity(boundary_3d.len());
     for pt in &boundary_3d {
@@ -100,10 +111,107 @@ fn tessellate_planar_face(
         normals.push(normal);
     }
 
-    // Ear clipping triangulation
     let indices = ear_clip(&boundary_uv, outward);
-
     (verts, normals, indices)
+}
+
+/// Check if a 2D polygon is convex by verifying all cross products have the same sign.
+fn is_convex(polygon: &[(f64, f64)]) -> bool {
+    let n = polygon.len();
+    if n < 3 { return false; }
+
+    let mut sign = 0i32;
+    for i in 0..n {
+        let (x0, y0) = polygon[i];
+        let (x1, y1) = polygon[(i + 1) % n];
+        let (x2, y2) = polygon[(i + 2) % n];
+        let cross = (x1 - x0) * (y2 - y1) - (y1 - y0) * (x2 - x1);
+        if cross.abs() < 1e-12 { continue; } // skip collinear
+        let s = if cross > 0.0 { 1 } else { -1 };
+        if sign == 0 {
+            sign = s;
+        } else if s != sign {
+            return false;
+        }
+    }
+    true
+}
+
+/// Structured ring tessellation for convex planar faces.
+///
+/// Creates one concentric ring at 50% from centroid to boundary, then:
+/// - Outer strip: boundary[i] → ring[i] quads split into 2N triangles
+/// - Inner fan: ring[i] → centroid, N triangles
+/// Total: 3N triangles with uniform aspect ratios.
+fn tessellate_convex_with_rings(
+    boundary_3d: &[Point3],
+    normal: NVec3<f64>,
+    keep_order: bool,
+) -> (Vec<NVec3<f64>>, Vec<NVec3<f64>>, Vec<u32>) {
+    let n = boundary_3d.len();
+
+    // Compute centroid
+    let mut cx = 0.0;
+    let mut cy = 0.0;
+    let mut cz = 0.0;
+    for pt in boundary_3d {
+        cx += pt.x;
+        cy += pt.y;
+        cz += pt.z;
+    }
+    let inv_n = 1.0 / n as f64;
+    let centroid = NVec3::new(cx * inv_n, cy * inv_n, cz * inv_n);
+
+    // Build vertices: [boundary (0..n), ring (n..2n), centroid (2n)]
+    let total_verts = 2 * n + 1;
+    let mut verts = Vec::with_capacity(total_verts);
+    let mut norms = Vec::with_capacity(total_verts);
+
+    // Boundary vertices (indices 0..n)
+    for pt in boundary_3d {
+        verts.push(NVec3::new(pt.x, pt.y, pt.z));
+        norms.push(normal);
+    }
+
+    // Ring vertices at 50% from centroid to boundary (indices n..2n)
+    for pt in boundary_3d {
+        let bv = NVec3::new(pt.x, pt.y, pt.z);
+        let ring_pt = centroid + (bv - centroid) * 0.5;
+        verts.push(ring_pt);
+        norms.push(normal);
+    }
+
+    // Centroid vertex (index 2n)
+    verts.push(centroid);
+    norms.push(normal);
+
+    let centroid_idx = (2 * n) as u32;
+
+    // Build triangles: 3N total
+    let mut indices = Vec::with_capacity(3 * n * 3);
+
+    for i in 0..n {
+        let i_next = (i + 1) % n;
+        let b0 = i as u32;              // boundary[i]
+        let b1 = i_next as u32;         // boundary[i+1]
+        let r0 = (n + i) as u32;        // ring[i]
+        let r1 = (n + i_next) as u32;   // ring[i+1]
+
+        if keep_order {
+            // Outer strip: two triangles per quad (boundary → ring)
+            indices.extend_from_slice(&[b0, b1, r1]);
+            indices.extend_from_slice(&[b0, r1, r0]);
+            // Inner fan: ring → centroid
+            indices.extend_from_slice(&[r0, r1, centroid_idx]);
+        } else {
+            // Reversed winding
+            indices.extend_from_slice(&[b0, r1, b1]);
+            indices.extend_from_slice(&[b0, r0, r1]);
+            indices.extend_from_slice(&[r0, centroid_idx, r1]);
+        }
+    }
+
+    (verts, norms, indices)
 }
 
 // ─── Curved face tessellation (adaptive parametric grid) ────────────────────

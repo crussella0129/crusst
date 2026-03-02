@@ -189,8 +189,8 @@ impl Shape {
 
     /// Revolve a 2D profile around the Z axis by `angle` radians.
     pub fn revolve(profile: &Profile, angle: f64) -> Self {
-        let n_profile = profile.segments.len().max(4) * 4;
-        let n_sweep = ((angle / std::f64::consts::FRAC_PI_4).ceil() as usize).max(4) * 2;
+        let n_profile = profile.segments.len().max(4) * 6;
+        let n_sweep = ((angle / std::f64::consts::FRAC_PI_4).ceil() as usize).max(6) * 6;
 
         let mut store = TopoStore::new();
         let mut all_verts: Vec<Vec<VertexId>> = Vec::new();
