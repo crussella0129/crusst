@@ -1,6 +1,6 @@
 use nalgebra::Vector3;
 
-/// A triangle mesh extracted from a signed distance field.
+/// A triangle mesh with per-vertex normals.
 pub struct TriangleMesh {
     /// Vertex positions.
     pub vertices: Vec<Vector3<f64>>,
@@ -26,31 +26,25 @@ impl TriangleMesh {
         let nv = self.vertices.len() as u32;
         let ni = self.indices.len() as u32;
 
-        // Pre-allocate: 4 (nv) + 12*nv (verts) + 12*nv (normals) + 4 (ni) + 4*ni (indices)
         let capacity = 4 + 12 * nv as usize + 12 * nv as usize + 4 + 4 * ni as usize;
         let mut buf = Vec::with_capacity(capacity);
 
-        // Vertex count
         buf.extend_from_slice(&nv.to_le_bytes());
 
-        // Vertices as f32 triples
         for v in &self.vertices {
             buf.extend_from_slice(&(v.x as f32).to_le_bytes());
             buf.extend_from_slice(&(v.y as f32).to_le_bytes());
             buf.extend_from_slice(&(v.z as f32).to_le_bytes());
         }
 
-        // Normals as f32 triples
         for n in &self.normals {
             buf.extend_from_slice(&(n.x as f32).to_le_bytes());
             buf.extend_from_slice(&(n.y as f32).to_le_bytes());
             buf.extend_from_slice(&(n.z as f32).to_le_bytes());
         }
 
-        // Index count
         buf.extend_from_slice(&ni.to_le_bytes());
 
-        // Indices
         for &i in &self.indices {
             buf.extend_from_slice(&i.to_le_bytes());
         }
@@ -84,7 +78,6 @@ impl BBox3 {
             && p.z >= self.min.z
             && p.z <= self.max.z
     }
-    /// Return the 8 corner vertices of this bounding box.
     pub fn corners(&self) -> [Vector3<f64>; 8] {
         let mn = self.min;
         let mx = self.max;
@@ -99,7 +92,6 @@ impl BBox3 {
             Vector3::new(mx.x, mx.y, mx.z),
         ]
     }
-    /// Split into 8 octants.
     pub fn octants(&self) -> [BBox3; 8] {
         let c = self.center();
         let mn = self.min;
@@ -117,119 +109,89 @@ impl BBox3 {
     }
 }
 
-/// Closed interval [lo, hi] for interval arithmetic.
+/// Settings controlling adaptive tessellation of B-Rep faces.
 #[derive(Clone, Copy, Debug)]
-pub struct Interval {
-    pub lo: f64,
-    pub hi: f64,
+pub struct TessSettings {
+    /// Maximum chord deviation — the maximum allowed distance between
+    /// the tessellated surface and the true mathematical surface.
+    pub chord_tolerance: f64,
+    /// Maximum edge length in the tessellation.
+    pub max_edge_length: f64,
+    /// Minimum number of subdivisions per face in each parametric direction.
+    pub min_subdivisions: u32,
+    /// Maximum angular step (radians) per arc segment. Provides a curvature-
+    /// based resolution floor independent of chord tolerance — ensures arcs
+    /// are visually smooth regardless of size.
+    pub max_angular_step: f64,
 }
 
-impl Interval {
-    pub fn new(lo: f64, hi: f64) -> Self {
-        debug_assert!(lo <= hi, "Interval lo ({lo}) must be <= hi ({hi})");
-        Self { lo, hi }
-    }
-    pub fn entire() -> Self {
-        Self {
-            lo: f64::NEG_INFINITY,
-            hi: f64::INFINITY,
-        }
-    }
-    pub fn definitely_positive(&self) -> bool {
-        self.lo > 0.0
-    }
-    pub fn definitely_negative(&self) -> bool {
-        self.hi < 0.0
-    }
-
-    // -- Interval-interval arithmetic --
-    // Named methods rather than std::ops traits because interval semantics
-    // differ from scalar arithmetic (e.g., sub swaps hi/lo of the rhs).
-    #[allow(clippy::should_implement_trait)]
-    pub fn add(self, other: Interval) -> Interval {
-        Interval::new(self.lo + other.lo, self.hi + other.hi)
-    }
-    #[allow(clippy::should_implement_trait)]
-    pub fn sub(self, other: Interval) -> Interval {
-        Interval::new(self.lo - other.hi, self.hi - other.lo)
-    }
-    #[allow(clippy::should_implement_trait)]
-    pub fn mul(self, other: Interval) -> Interval {
-        let a = self.lo * other.lo;
-        let b = self.lo * other.hi;
-        let c = self.hi * other.lo;
-        let d = self.hi * other.hi;
-        Interval::new(a.min(b).min(c).min(d), a.max(b).max(c).max(d))
-    }
-    pub fn union(self, other: Interval) -> Interval {
-        Interval::new(self.lo.min(other.lo), self.hi.max(other.hi))
-    }
-
-    // -- Unary operations --
-
-    pub fn abs(self) -> Interval {
-        if self.lo >= 0.0 {
-            self
-        } else if self.hi <= 0.0 {
-            Interval::new(-self.hi, -self.lo)
-        } else {
-            Interval::new(0.0, self.lo.abs().max(self.hi))
-        }
-    }
-    pub fn sqrt(self) -> Interval {
-        Interval::new(self.lo.max(0.0).sqrt(), self.hi.max(0.0).sqrt())
-    }
-    #[allow(clippy::should_implement_trait)]
-    pub fn neg(self) -> Interval {
-        Interval::new(-self.hi, -self.lo)
-    }
-
-    // -- Interval min/max --
-
-    pub fn max(self, other: Interval) -> Interval {
-        Interval::new(self.lo.max(other.lo), self.hi.max(other.hi))
-    }
-    pub fn min(self, other: Interval) -> Interval {
-        Interval::new(self.lo.min(other.lo), self.hi.min(other.hi))
-    }
-
-    // -- Scalar operations --
-
-    pub fn scalar_add(self, s: f64) -> Interval {
-        Interval::new(self.lo + s, self.hi + s)
-    }
-    pub fn scalar_sub(self, s: f64) -> Interval {
-        Interval::new(self.lo - s, self.hi - s)
-    }
-    pub fn scalar_mul(self, s: f64) -> Interval {
-        if s >= 0.0 {
-            Interval::new(self.lo * s, self.hi * s)
-        } else {
-            Interval::new(self.hi * s, self.lo * s)
-        }
-    }
-
-    // -- Predicates --
-
-    pub fn contains_zero(&self) -> bool {
-        self.lo <= 0.0 && self.hi >= 0.0
-    }
-}
-
-/// Settings controlling adaptive mesh extraction.
-#[derive(Clone, Copy)]
-pub struct MeshSettings {
-    pub max_depth: u8,
-    pub min_depth: u8,
-    pub edge_tolerance: f64,
-}
-
-impl Default for MeshSettings {
+impl Default for TessSettings {
     fn default() -> Self {
         Self {
-            max_depth: 8,
-            min_depth: 3,
-            edge_tolerance: 1e-6,
+            chord_tolerance: 0.01,
+            max_edge_length: 5.0,
+            min_subdivisions: 4,
+            max_angular_step: std::f64::consts::PI / 36.0, // 5° per step
+        }
+    }
+}
+
+impl TessSettings {
+    /// Compute tessellation settings automatically from the bounding diagonal
+    /// of a shape. This is a fallback when curvature info is not available.
+    pub fn from_bounding_diagonal(diag: f64) -> Self {
+        Self::auto_tune(diag, f64::INFINITY)
+    }
+
+    /// Compute tessellation settings from bounding diagonal and minimum
+    /// curvature radius across all faces. This produces smooth results by
+    /// scaling chord tolerance to the smallest curved feature, not the
+    /// overall bounding box (which unfairly penalizes elongated shapes).
+    ///
+    /// - `diag`: bounding box diagonal length
+    /// - `min_curvature_r`: smallest curvature radius (INFINITY if all planar)
+    pub fn auto_tune(diag: f64, min_curvature_r: f64) -> Self {
+        let diag = diag.max(1e-10);
+
+        // Chord tolerance drives visual smoothness for curved surfaces.
+        // For a circle of radius R with n segments, chord deviation =
+        // R(1 - cos(π/n)). At 0.3% of R, a radius-5 cylinder gets:
+        //   tol = 0.015, initial 32 segs dev=0.024 → refines once → 64 segs
+        //   dev=0.006 < 0.015 ✓ → smooth 128 segments around full barrel.
+        let chord_tol = if min_curvature_r.is_finite() {
+            min_curvature_r * 0.003
+        } else {
+            diag * 0.001
+        };
+
+        // Max edge length is a loose safety net to prevent excessively long
+        // triangles on flat regions. Chord deviation is the real quality
+        // driver — keep this loose so it doesn't cause over-refinement.
+        let max_edge = diag * 0.10;
+
+        // Min subdivisions: 32 for curved shapes (good starting grid for
+        // adaptive refinement), 4 for all-planar shapes.
+        let min_sub = if min_curvature_r.is_finite() { 32 } else { 4 };
+
+        // Angular step: tighter for high-curvature features. Scale from
+        // 5° baseline down to 3° as curvature radius shrinks relative to
+        // bounding diagonal. This ensures small curved features get denser
+        // arc sampling while large gentle curves stay efficient.
+        let angular_step = if min_curvature_r.is_finite() {
+            let curvature_ratio = (min_curvature_r / diag).clamp(0.01, 1.0);
+            // 3° for tight curves (ratio→0), 5° for gentle curves (ratio→1)
+            let deg_min = 3.0_f64.to_radians();
+            let deg_max = 5.0_f64.to_radians();
+            deg_min + (deg_max - deg_min) * curvature_ratio
+        } else {
+            5.0_f64.to_radians()
+        };
+
+        Self {
+            chord_tolerance: chord_tol,
+            max_edge_length: max_edge,
+            min_subdivisions: min_sub,
+            max_angular_step: angular_step,
         }
     }
 }
