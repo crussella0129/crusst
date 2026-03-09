@@ -1,6 +1,6 @@
 # Crusst — B-Rep Geometry Kernel for Parametric CAD Software in Rust
 
-A pure Rust **Boundary Representation (B-Rep)** geometry kernel. Crusst stores shapes as exact mathematical surfaces with explicit topology — vertices, edges, faces, shells, and solids — enabling precise CAD operations, adaptive tessellation, and lossless STEP export.
+A pure Rust **Boundary Representation (B-Rep)** geometry kernel. Crusst stores shapes as exact mathematical surfaces with explicit topology; vertices, edges, faces, shells, and solids, enabling precise CAD operations, adaptive tessellation, and lossless STEP export. Crusst shines (or at least its goal is to shine) over other Rust based competitors by providing the cleanest boolean operations, in addition to lighting fast processing and universal graphics hardware compatibility.
 
 ## Table of Contents
 
